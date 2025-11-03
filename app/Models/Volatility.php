@@ -13,24 +13,21 @@ class Volatility extends Model
     protected $fillable = [
         'stock_id',
         'calculation_date',
-        'hv_10',
-        'hv_20',
-        'hv_30',
-        'hv_60',
-        'iv_call',
-        'iv_put',
-        'iv_atm',
+        'period',
+        'historical_volatility',
+        'realized_volatility',
+        'garch_volatility',
+        'atm_iv',
+        'iv_smile',
     ];
 
     protected $casts = [
         'calculation_date' => 'date',
-        'hv_10' => 'decimal:4',
-        'hv_20' => 'decimal:4',
-        'hv_30' => 'decimal:4',
-        'hv_60' => 'decimal:4',
-        'iv_call' => 'decimal:4',
-        'iv_put' => 'decimal:4',
-        'iv_atm' => 'decimal:4',
+        'historical_volatility' => 'decimal:4',
+        'realized_volatility' => 'decimal:4',
+        'garch_volatility' => 'decimal:4',
+        'atm_iv' => 'decimal:4',
+        'iv_smile' => 'array',
     ];
 
     /**
@@ -42,49 +39,129 @@ class Volatility extends Model
     }
 
     /**
-     * 依日期範圍查詢
+     * 依計算日期查詢
      */
-    public function scopeDateRange($query, $startDate, $endDate)
+    public function scopeForDate($query, $date)
     {
-        return $query->whereBetween('calculation_date', [$startDate, $endDate]);
+        return $query->where('calculation_date', $date);
+    }
+
+    /**
+     * 依期間查詢
+     */
+    public function scopeForPeriod($query, $period)
+    {
+        return $query->where('period', $period);
     }
 
     /**
      * 取得最新的波動率
      */
-    public function scopeLatest($query, $stockId)
+    public function scopeLatest($query)
     {
-        return $query->where('stock_id', $stockId)
-            ->orderBy('calculation_date', 'desc')
-            ->first();
+        return $query->orderBy('calculation_date', 'desc');
     }
 
     /**
-     * 計算 HV-IV 差異
+     * 取得波動率錐形數據
      */
-    public function getHvIvSpreadAttribute()
+    public static function getVolatilityCone($stockId, $lookback = 252)
     {
-        if ($this->hv_20 && $this->iv_atm) {
-            return $this->iv_atm - $this->hv_20;
+        $endDate = now();
+        $startDate = now()->subDays($lookback);
+
+        $periods = ['7', '14', '21', '30', '60', '90'];
+        $percentiles = [10, 25, 50, 75, 90];
+
+        $cone = [];
+
+        foreach ($periods as $period) {
+            $volatilities = self::where('stock_id', $stockId)
+                ->where('period', $period)
+                ->whereBetween('calculation_date', [$startDate, $endDate])
+                ->pluck('historical_volatility')
+                ->sort()
+                ->values();
+
+            if ($volatilities->isEmpty()) {
+                continue;
+            }
+
+            $cone[$period] = [];
+            foreach ($percentiles as $percentile) {
+                $index = (int) (($percentile / 100) * ($volatilities->count() - 1));
+                $cone[$period]["p{$percentile}"] = $volatilities[$index];
+            }
+
+            // 加入當前值
+            $current = self::where('stock_id', $stockId)
+                ->where('period', $period)
+                ->latest('calculation_date')
+                ->value('historical_volatility');
+
+            $cone[$period]['current'] = $current;
         }
+
+        return $cone;
+    }
+
+    /**
+     * 取得波動率微笑數據
+     */
+    public function getSmileDataAttribute()
+    {
+        if (!$this->iv_smile) {
+            return null;
+        }
+
+        // 格式化波動率微笑數據
+        $smileData = [];
+        foreach ($this->iv_smile as $strike => $iv) {
+            $smileData[] = [
+                'strike' => $strike,
+                'iv' => $iv,
+                'moneyness' => $this->calculateMoneyness($strike),
+            ];
+        }
+
+        return collect($smileData)->sortBy('strike')->values();
+    }
+
+    /**
+     * 計算 Moneyness
+     */
+    private function calculateMoneyness($strike)
+    {
+        $spotPrice = $this->stock->latestPrice->close_price ?? 0;
+
+        if ($spotPrice > 0) {
+            return $strike / $spotPrice;
+        }
+
         return null;
     }
 
     /**
-     * 判斷 IV 是否被高估
+     * 計算期限結構
      */
-    public function isIvOvervalued($threshold = 0.05)
+    public static function getTermStructure($stockId, $date = null)
     {
-        $spread = $this->hv_iv_spread;
-        return $spread !== null && $spread > $threshold;
-    }
+        $date = $date ?? now();
 
-    /**
-     * 判斷 IV 是否被低估
-     */
-    public function isIvUndervalued($threshold = -0.05)
-    {
-        $spread = $this->hv_iv_spread;
-        return $spread !== null && $spread < $threshold;
+        $volatilities = self::where('stock_id', $stockId)
+            ->where('calculation_date', $date)
+            ->orderBy('period')
+            ->get()
+            ->map(function ($vol) {
+                return [
+                    'period' => $vol->period,
+                    'days' => (int) $vol->period,
+                    'hv' => $vol->historical_volatility,
+                    'iv' => $vol->atm_iv,
+                    'rv' => $vol->realized_volatility,
+                ];
+            });
+
+        return $volatilities;
     }
 }

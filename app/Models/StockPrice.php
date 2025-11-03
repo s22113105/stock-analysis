@@ -18,8 +18,6 @@ class StockPrice extends Model
         'low_price',
         'close_price',
         'volume',
-        'turnover',
-        'transaction',
         'change',
         'change_percent',
     ];
@@ -31,8 +29,6 @@ class StockPrice extends Model
         'low_price' => 'decimal:2',
         'close_price' => 'decimal:2',
         'volume' => 'integer',
-        'turnover' => 'decimal:2',
-        'transaction' => 'integer',
         'change' => 'decimal:2',
         'change_percent' => 'decimal:4',
     ];
@@ -54,18 +50,73 @@ class StockPrice extends Model
     }
 
     /**
+     * 取得特定期間的價格
+     */
+    public function scopePeriod($query, $days)
+    {
+        $startDate = now()->subDays($days);
+        return $query->where('trade_date', '>=', $startDate);
+    }
+
+    /**
      * 計算日報酬率
      */
     public function getDailyReturnAttribute()
     {
-        return $this->change_percent / 100;
+        $previousPrice = self::where('stock_id', $this->stock_id)
+            ->where('trade_date', '<', $this->trade_date)
+            ->orderBy('trade_date', 'desc')
+            ->first();
+
+        if ($previousPrice && $previousPrice->close_price > 0) {
+            return ($this->close_price - $previousPrice->close_price) / $previousPrice->close_price;
+        }
+
+        return null;
     }
 
     /**
-     * 取得特定股票的歷史資料
+     * 計算真實波動幅度 (True Range)
      */
-    public function scopeForStock($query, $stockId)
+    public function getTrueRangeAttribute()
     {
-        return $query->where('stock_id', $stockId)->orderBy('trade_date', 'desc');
+        $previousClose = self::where('stock_id', $this->stock_id)
+            ->where('trade_date', '<', $this->trade_date)
+            ->orderBy('trade_date', 'desc')
+            ->value('close_price');
+
+        if ($previousClose) {
+            return max(
+                $this->high_price - $this->low_price,
+                abs($this->high_price - $previousClose),
+                abs($this->low_price - $previousClose)
+            );
+        }
+
+        return $this->high_price - $this->low_price;
+    }
+
+    /**
+     * 計算價格區間
+     */
+    public function getPriceRangeAttribute()
+    {
+        return $this->high_price - $this->low_price;
+    }
+
+    /**
+     * 是否為漲停
+     */
+    public function getIsLimitUpAttribute()
+    {
+        return $this->change_percent >= 9.5;
+    }
+
+    /**
+     * 是否為跌停
+     */
+    public function getIsLimitDownAttribute()
+    {
+        return $this->change_percent <= -9.5;
     }
 }

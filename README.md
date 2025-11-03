@@ -1,66 +1,255 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 📈 Options Trading System - Laravel 10 + Vue 3
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+台股選擇權交易分析系統，結合 Black-Scholes 定價模型、波動率分析與策略回測功能。
 
-## About Laravel
+## 🎯 系統特色
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **即時數據爬蟲**：自動擷取 TWSE/Yahoo Finance 股票與選擇權資料
+- **Black-Scholes 定價**：計算理論價格、隱含波動率(IV)、歷史波動率(HV)
+- **預測模型**：整合 LSTM/ARIMA/GARCH 時間序列預測
+- **策略回測**：支援多種交易策略回測與績效評估
+- **即時推播**：WebSocket 即時資料更新
+- **視覺化圖表**：Chart.js 互動式圖表展示
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## 🛠️ 技術架構
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### 後端
+- Laravel 10 (PHP 8.2)
+- MySQL 8.0
+- Redis (Queue & Cache)
+- Python (ML Models)
 
-## Learning Laravel
+### 前端
+- Vue 3 + Vite
+- Vuetify 3 (UI Framework)
+- Chart.js / ApexCharts
+- Pinia (State Management)
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### 部署
+- Docker & Docker Compose
+- Nginx
+- Supervisor (Queue Worker)
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+## 📦 快速開始
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### 系統需求
+- Docker Desktop
+- Git
+- 至少 4GB RAM
+- 10GB 可用硬碟空間
 
-## Laravel Sponsors
+### 安裝步驟
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+1. **克隆專案**
+```bash
+git clone [your-repo-url]
+cd options-trading-system
+```
 
-### Premium Partners
+2. **執行初始化腳本**
+```bash
+chmod +x init.sh
+./init.sh
+```
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+3. **設定 API 金鑰**
+編輯 `.env` 檔案，加入您的 API 金鑰：
+```env
+YAHOO_FINANCE_API_KEY=your_key
+ALPHA_VANTAGE_API_KEY=your_key
+```
 
-## Contributing
+4. **啟動開發伺服器**
+```bash
+# 啟動後端服務
+docker-compose up -d
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+# 啟動前端開發伺服器
+docker-compose exec node npm run dev
+```
 
-## Code of Conduct
+## 📁 專案結構
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```
+options-trading-system/
+├── app/
+│   ├── Models/           # Eloquent 模型
+│   ├── Http/
+│   │   ├── Controllers/  # API 控制器
+│   │   └── Middleware/
+│   ├── Jobs/             # 佇列任務
+│   ├── Services/         # 商業邏輯
+│   │   ├── BlackScholesService.php
+│   │   ├── VolatilityService.php
+│   │   ├── BacktestService.php
+│   │   └── CrawlerService.php
+│   └── Console/
+│       └── Commands/     # Artisan 指令
+├── database/
+│   ├── migrations/       # 資料庫遷移
+│   └── seeders/         # 測試資料
+├── resources/
+│   ├── js/              # Vue 3 應用程式
+│   │   ├── components/  # Vue 元件
+│   │   ├── views/       # 頁面視圖
+│   │   ├── stores/      # Pinia stores
+│   │   └── utils/       # 工具函數
+│   └── css/
+├── docker/              # Docker 設定檔
+├── storage/            # 檔案儲存
+└── public/            # 公開資源
+```
 
-## Security Vulnerabilities
+## 🗄️ 資料庫架構
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 主要資料表
+- `stocks` - 股票基本資料
+- `stock_prices` - 股票價格歷史
+- `options` - 選擇權合約
+- `option_prices` - 選擇權價格
+- `volatilities` - 波動率數據
+- `predictions` - 預測結果
+- `backtest_results` - 回測結果
 
-## License
+## 📊 核心功能
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### 1. 資料擷取 (Day 3-4)
+```php
+// 執行股票資料爬蟲
+php artisan crawler:stocks
+
+// 執行選擇權資料爬蟲
+php artisan crawler:options
+```
+
+### 2. Black-Scholes 計算 (Day 5-6)
+```php
+// API 端點
+POST /api/black-scholes/calculate
+{
+    "spot_price": 100,
+    "strike_price": 105,
+    "time_to_expiry": 0.25,
+    "risk_free_rate": 0.02,
+    "volatility": 0.3,
+    "option_type": "call"
+}
+```
+
+### 3. 波動率分析
+```php
+// 計算歷史波動率
+GET /api/volatility/historical/{stock_id}?period=30
+
+// 計算隱含波動率
+GET /api/volatility/implied/{option_id}
+```
+
+### 4. 策略回測 (Day 10-11)
+```php
+// 執行回測
+POST /api/backtest/run
+{
+    "strategy": "covered_call",
+    "stock_id": 1,
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "parameters": {...}
+}
+```
+
+## 🔧 常用指令
+
+### Laravel Artisan
+```bash
+# 執行遷移
+docker-compose exec app php artisan migrate
+
+# 建立控制器
+docker-compose exec app php artisan make:controller ApiController
+
+# 清除快取
+docker-compose exec app php artisan cache:clear
+
+# 執行佇列
+docker-compose exec app php artisan queue:work
+```
+
+### NPM 指令
+```bash
+# 開發模式
+docker-compose exec node npm run dev
+
+# 生產建置
+docker-compose exec node npm run build
+
+# 檢查程式碼
+docker-compose exec node npm run lint
+```
+
+### Docker 指令
+```bash
+# 查看容器狀態
+docker-compose ps
+
+# 查看日誌
+docker-compose logs -f app
+
+# 進入容器
+docker-compose exec app bash
+
+# 重新建置
+docker-compose build --no-cache
+
+# 停止所有服務
+docker-compose down
+```
+
+## 🌐 API 端點
+
+| 方法 | 端點 | 描述 |
+|------|------|------|
+| GET | `/api/stocks` | 取得股票列表 |
+| GET | `/api/stocks/{id}/prices` | 取得股價歷史 |
+| GET | `/api/options/{id}` | 取得選擇權資料 |
+| POST | `/api/black-scholes/calculate` | 計算理論價格 |
+| GET | `/api/volatility/{id}` | 取得波動率數據 |
+| POST | `/api/predictions/run` | 執行預測模型 |
+| POST | `/api/backtest/run` | 執行回測 |
+
+## 📈 開發進度
+
+- [x] Day 1-2: 環境設定與資料庫
+- [ ] Day 3-4: 資料擷取系統
+- [ ] Day 5-6: Black-Scholes 計算引擎
+- [ ] Day 7: 第一週整合測試
+- [ ] Day 8-9: 預測模型與圖表
+- [ ] Day 10-11: 策略回測系統
+- [ ] Day 12: Laravel 後台管理
+- [ ] Day 13: WebSocket 即時更新
+- [ ] Day 14: 測試與部署
+
+## 🔒 安全性
+
+- 使用 Laravel Sanctum 進行 API 認證
+- 所有 API 端點需要認證
+- 敏感資料使用環境變數
+- SQL Injection 防護
+- XSS 防護
+
+## 📝 授權
+
+MIT License
+
+## 👥 團隊成員
+
+- 後端開發：[Your Name]
+- 前端開發：[Your Name]
+- 資料分析：[Your Name]
+
+## 📧 聯絡方式
+
+如有任何問題，請聯絡：[your-email@example.com]
+
+---
+
