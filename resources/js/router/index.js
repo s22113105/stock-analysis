@@ -1,19 +1,18 @@
-// resources/js/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 
-// Import Views (lazy loading)
-const Dashboard = () => import('../views/Dashboard.vue')
-const Stocks = () => import('../views/Stocks.vue')
-const Options = () => import('../views/Options.vue')
-const BlackScholes = () => import('../views/BlackScholes.vue')
-const Volatility = () => import('../views/Volatility.vue')
-const Predictions = () => import('../views/Predictions.vue')
-const Backtest = () => import('../views/Backtest.vue')
-const Realtime = () => import('../views/Realtime.vue')
-const Reports = () => import('../views/Reports.vue')
-const Settings = () => import('../views/Settings.vue')
-const Profile = () => import('../views/Profile.vue')
-const Login = () => import('../views/Login.vue')
+// Views
+import Dashboard from '../views/Dashboard.vue'
+import Stocks from '../views/Stocks.vue'
+import Options from '../views/Options.vue'
+import BlackScholes from '../views/BlackScholes.vue'
+import Volatility from '../views/Volatility.vue'
+import Predictions from '../views/Predictions.vue'
+import Backtest from '../views/Backtest.vue'
+import Realtime from '../views/Realtime.vue'
+import Reports from '../views/Reports.vue'
+import Settings from '../views/Settings.vue'
+import Profile from '../views/Profile.vue'
+import Login from '../views/Login.vue'
 
 const routes = [
   {
@@ -86,34 +85,23 @@ const routes = [
     path: '/login',
     name: 'Login',
     component: Login,
-    meta: { guest: true }
+    meta: { requiresAuth: false }
   }
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes
 })
 
-// Navigation Guards
+// Navigation Guard
 router.beforeEach((to, from, next) => {
-  const isAuthenticated = localStorage.getItem('auth_token')
-
-  if (to.matched.some(record => record.meta.requiresAuth)) {
-    if (!isAuthenticated) {
-      next({
-        path: '/login',
-        query: { redirect: to.fullPath }
-      })
-    } else {
-      next()
-    }
-  } else if (to.matched.some(record => record.meta.guest)) {
-    if (isAuthenticated) {
-      next({ path: '/' })
-    } else {
-      next()
-    }
+  const isAuthenticated = localStorage.getItem('authToken')
+  
+  if (to.meta.requiresAuth && !isAuthenticated) {
+    next('/login')
+  } else if (to.name === 'Login' && isAuthenticated) {
+    next('/')
   } else {
     next()
   }

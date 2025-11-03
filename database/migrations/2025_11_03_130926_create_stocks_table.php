@@ -13,7 +13,19 @@ return new class extends Migration
     {
         Schema::create('stocks', function (Blueprint $table) {
             $table->id();
+            $table->string('symbol', 20)->unique()->comment('股票代碼');
+            $table->string('name', 100)->comment('股票名稱');
+            $table->string('exchange', 50)->default('TWSE')->comment('交易所');
+            $table->string('industry', 100)->nullable()->comment('產業別');
+            $table->decimal('market_cap', 20, 2)->nullable()->comment('市值');
+            $table->decimal('shares_outstanding', 20, 2)->nullable()->comment('流通股數');
+            $table->boolean('is_active')->default(true)->comment('是否啟用');
+            $table->json('meta_data')->nullable()->comment('其他資料');
             $table->timestamps();
+            
+            $table->index('symbol');
+            $table->index('is_active');
+            $table->index('exchange');
         });
     }
 

@@ -3,11 +3,15 @@ import vue from '@vitejs/plugin-vue'
 import vuetify from 'vite-plugin-vuetify'
 import { fileURLToPath, URL } from 'node:url'
 
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
     vuetify({
       autoImport: true,
+      styles: {
+        configFile: 'resources/css/settings.scss',
+      },
     }),
   ],
   resolve: {
@@ -16,22 +20,22 @@ export default defineConfig({
     },
   },
   server: {
-    host: true,
+    host: '0.0.0.0',
     port: 5173,
     hmr: {
-      host: 'localhost'
+      host: 'localhost',
     },
     watch: {
       usePolling: true,
-    }
+    },
   },
   build: {
-    outDir: 'public/build',
     manifest: true,
+    outDir: 'public/build',
     rollupOptions: {
       input: {
-        app: '/resources/js/app.js'
-      }
-    }
-  }
+        app: 'resources/js/app.js',
+      },
+    },
+  },
 })

@@ -17,13 +17,17 @@ class Option extends Model
         'option_type',
         'strike_price',
         'expiry_date',
+        'contract_size',
+        'exercise_style',
         'is_active',
+        'meta_data',
     ];
 
     protected $casts = [
         'strike_price' => 'decimal:2',
         'expiry_date' => 'date',
         'is_active' => 'boolean',
+        'meta_data' => 'array',
     ];
 
     /**
@@ -40,6 +44,14 @@ class Option extends Model
     public function prices(): HasMany
     {
         return $this->hasMany(OptionPrice::class);
+    }
+
+    /**
+     * 預測數據
+     */
+    public function predictions()
+    {
+        return $this->morphMany(Prediction::class, 'predictable');
     }
 
     /**
@@ -87,15 +99,74 @@ class Option extends Model
      */
     public function getDaysToExpiryAttribute()
     {
-        return now()->diffInDays($this->expiry_date);
+        return now()->diffInDays($this->expiry_date, false);
     }
 
     /**
-     * 檢查是否為價平
+     * 計算到期時間 (年)
      */
-    public function isAtTheMoney($spotPrice)
+    public function getTimeToExpiryAttribute()
     {
-        $threshold = $spotPrice * 0.05; // 5% 範圍內視為價平
-        return abs($this->strike_price - $spotPrice) <= $threshold;
+        return $this->days_to_expiry / 365;
+    }
+
+    /**
+     * 檢查是否為價內 (In The Money)
+     */
+    public function isInTheMoney($spotPrice)
+    {
+        if ($this->option_type === 'call') {
+            return $spotPrice > $this->strike_price;
+        } else {
+            return $spotPrice < $this->strike_price;
+        }
+    }
+
+    /**
+     * 檢查是否為價平 (At The Money)
+     */
+    public function isAtTheMoney($spotPrice, $threshold = 0.01)
+    {
+        $percentageDiff = abs(($spotPrice - $this->strike_price) / $spotPrice);
+        return $percentageDiff <= $threshold;
+    }
+
+    /**
+     * 檢查是否為價外 (Out of The Money)
+     */
+    public function isOutOfTheMoney($spotPrice)
+    {
+        return !$this->isInTheMoney($spotPrice) && !$this->isAtTheMoney($spotPrice);
+    }
+
+    /**
+     * 計算內含價值
+     */
+    public function getIntrinsicValue($spotPrice)
+    {
+        if ($this->option_type === 'call') {
+            return max(0, $spotPrice - $this->strike_price);
+        } else {
+            return max(0, $this->strike_price - $spotPrice);
+        }
+    }
+
+    /**
+     * 計算時間價值
+     */
+    public function getTimeValue($optionPrice, $spotPrice)
+    {
+        return max(0, $optionPrice - $this->getIntrinsicValue($spotPrice));
+    }
+
+    /**
+     * 取得相同到期日的選擇權鏈
+     */
+    public function getOptionChain()
+    {
+        return self::where('stock_id', $this->stock_id)
+            ->where('expiry_date', $this->expiry_date)
+            ->orderBy('strike_price')
+            ->get();
     }
 }

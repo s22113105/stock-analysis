@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Carbon\Carbon;
 
 class StockPrice extends Model
 {
@@ -13,24 +14,26 @@ class StockPrice extends Model
     protected $fillable = [
         'stock_id',
         'trade_date',
-        'open_price',
-        'high_price',
-        'low_price',
-        'close_price',
+        'open',
+        'high',
+        'low',
+        'close',
         'volume',
+        'turnover',
         'change',
         'change_percent',
     ];
 
     protected $casts = [
         'trade_date' => 'date',
-        'open_price' => 'decimal:2',
-        'high_price' => 'decimal:2',
-        'low_price' => 'decimal:2',
-        'close_price' => 'decimal:2',
+        'open' => 'decimal:2',
+        'high' => 'decimal:2',
+        'low' => 'decimal:2',
+        'close' => 'decimal:2',
         'volume' => 'integer',
+        'turnover' => 'decimal:2',
         'change' => 'decimal:2',
-        'change_percent' => 'decimal:4',
+        'change_percent' => 'decimal:2',
     ];
 
     /**
@@ -42,37 +45,41 @@ class StockPrice extends Model
     }
 
     /**
-     * 依日期範圍查詢
-     */
-    public function scopeDateRange($query, $startDate, $endDate)
-    {
-        return $query->whereBetween('trade_date', [$startDate, $endDate]);
-    }
-
-    /**
-     * 取得特定期間的價格
-     */
-    public function scopePeriod($query, $days)
-    {
-        $startDate = now()->subDays($days);
-        return $query->where('trade_date', '>=', $startDate);
-    }
-
-    /**
      * 計算日報酬率
      */
     public function getDailyReturnAttribute()
     {
-        $previousPrice = self::where('stock_id', $this->stock_id)
-            ->where('trade_date', '<', $this->trade_date)
-            ->orderBy('trade_date', 'desc')
-            ->first();
-
-        if ($previousPrice && $previousPrice->close_price > 0) {
-            return ($this->close_price - $previousPrice->close_price) / $previousPrice->close_price;
+        if ($this->change_percent !== null) {
+            return $this->change_percent;
         }
 
-        return null;
+        $previousClose = self::where('stock_id', $this->stock_id)
+            ->where('trade_date', '<', $this->trade_date)
+            ->orderBy('trade_date', 'desc')
+            ->value('close');
+
+        if (!$previousClose) {
+            return null;
+        }
+
+        return (($this->close - $previousClose) / $previousClose) * 100;
+    }
+
+    /**
+     * 計算對數報酬率
+     */
+    public function getLogReturnAttribute()
+    {
+        $previousClose = self::where('stock_id', $this->stock_id)
+            ->where('trade_date', '<', $this->trade_date)
+            ->orderBy('trade_date', 'desc')
+            ->value('close');
+
+        if (!$previousClose) {
+            return null;
+        }
+
+        return log($this->close / $previousClose);
     }
 
     /**
@@ -83,40 +90,84 @@ class StockPrice extends Model
         $previousClose = self::where('stock_id', $this->stock_id)
             ->where('trade_date', '<', $this->trade_date)
             ->orderBy('trade_date', 'desc')
-            ->value('close_price');
+            ->value('close');
 
-        if ($previousClose) {
-            return max(
-                $this->high_price - $this->low_price,
-                abs($this->high_price - $previousClose),
-                abs($this->low_price - $previousClose)
-            );
+        if (!$previousClose) {
+            return $this->high - $this->low;
         }
 
-        return $this->high_price - $this->low_price;
+        return max(
+            $this->high - $this->low,
+            abs($this->high - $previousClose),
+            abs($this->low - $previousClose)
+        );
     }
 
     /**
-     * 計算價格區間
+     * 計算 RSI (Relative Strength Index)
      */
-    public function getPriceRangeAttribute()
+    public static function calculateRSI($stockId, $period = 14, $date = null)
     {
-        return $this->high_price - $this->low_price;
+        $date = $date ?: now();
+        
+        $prices = self::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $date)
+            ->orderBy('trade_date', 'desc')
+            ->limit($period + 1)
+            ->pluck('close')
+            ->reverse()
+            ->values();
+
+        if ($prices->count() < $period + 1) {
+            return null;
+        }
+
+        $gains = [];
+        $losses = [];
+
+        for ($i = 1; $i <= $period; $i++) {
+            $change = $prices[$i] - $prices[$i - 1];
+            if ($change > 0) {
+                $gains[] = $change;
+                $losses[] = 0;
+            } else {
+                $gains[] = 0;
+                $losses[] = abs($change);
+            }
+        }
+
+        $avgGain = array_sum($gains) / $period;
+        $avgLoss = array_sum($losses) / $period;
+
+        if ($avgLoss == 0) {
+            return 100;
+        }
+
+        $rs = $avgGain / $avgLoss;
+        return 100 - (100 / (1 + $rs));
     }
 
     /**
-     * 是否為漲停
+     * 計算移動平均
      */
-    public function getIsLimitUpAttribute()
+    public static function calculateMA($stockId, $period, $date = null)
     {
-        return $this->change_percent >= 9.5;
+        $date = $date ?: now();
+        
+        $avg = self::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $date)
+            ->orderBy('trade_date', 'desc')
+            ->limit($period)
+            ->avg('close');
+
+        return $avg;
     }
 
     /**
-     * 是否為跌停
+     * 取得特定日期範圍的價格
      */
-    public function getIsLimitDownAttribute()
+    public function scopeDateRange($query, $startDate, $endDate)
     {
-        return $this->change_percent <= -9.5;
+        return $query->whereBetween('trade_date', [$startDate, $endDate]);
     }
 }

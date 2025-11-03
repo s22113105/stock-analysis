@@ -13,17 +13,23 @@ class Stock extends Model
     protected $fillable = [
         'symbol',
         'name',
-        'market',
+        'exchange',
         'industry',
+        'market_cap',
+        'shares_outstanding',
         'is_active',
+        'meta_data',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'meta_data' => 'array',
+        'market_cap' => 'decimal:2',
+        'shares_outstanding' => 'decimal:2',
     ];
 
     /**
-     * 取得股票的價格資料
+     * 股票價格歷史
      */
     public function prices(): HasMany
     {
@@ -31,7 +37,7 @@ class Stock extends Model
     }
 
     /**
-     * 取得股票的選擇權
+     * 選擇權
      */
     public function options(): HasMany
     {
@@ -39,7 +45,7 @@ class Stock extends Model
     }
 
     /**
-     * 取得股票的波動率資料
+     * 波動率數據
      */
     public function volatilities(): HasMany
     {
@@ -47,15 +53,15 @@ class Stock extends Model
     }
 
     /**
-     * 取得股票的預測資料
+     * 預測數據
      */
-    public function predictions(): HasMany
+    public function predictions()
     {
-        return $this->hasMany(Prediction::class);
+        return $this->morphMany(Prediction::class, 'predictable');
     }
 
     /**
-     * 取得股票的回測結果
+     * 回測結果
      */
     public function backtestResults(): HasMany
     {
@@ -63,7 +69,7 @@ class Stock extends Model
     }
 
     /**
-     * 取得最新的價格資料
+     * 取得最新價格
      */
     public function latestPrice()
     {
@@ -71,18 +77,52 @@ class Stock extends Model
     }
 
     /**
-     * 根據股票代碼尋找
+     * 取得特定日期的價格
      */
-    public function scopeBySymbol($query, string $symbol)
+    public function priceAt($date)
     {
-        return $query->where('symbol', $symbol);
+        return $this->prices()->where('trade_date', $date)->first();
     }
 
     /**
-     * 只取得啟用的股票
+     * 取得價格區間
+     */
+    public function pricesBetween($startDate, $endDate)
+    {
+        return $this->prices()
+            ->whereBetween('trade_date', [$startDate, $endDate])
+            ->orderBy('trade_date')
+            ->get();
+    }
+
+    /**
+     * 計算報酬率
+     */
+    public function calculateReturn($startDate, $endDate)
+    {
+        $startPrice = $this->priceAt($startDate)?->close;
+        $endPrice = $this->priceAt($endDate)?->close;
+        
+        if (!$startPrice || !$endPrice) {
+            return null;
+        }
+        
+        return (($endPrice - $startPrice) / $startPrice) * 100;
+    }
+
+    /**
+     * 取得活躍的股票
      */
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    /**
+     * 依交易所篩選
+     */
+    public function scopeByExchange($query, $exchange)
+    {
+        return $query->where('exchange', $exchange);
     }
 }

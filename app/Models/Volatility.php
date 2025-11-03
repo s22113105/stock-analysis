@@ -13,21 +13,30 @@ class Volatility extends Model
     protected $fillable = [
         'stock_id',
         'calculation_date',
-        'period',
+        'period_days',
         'historical_volatility',
-        'realized_volatility',
+        'implied_volatility_call',
+        'implied_volatility_put',
+        'volatility_skew',
+        'volatility_smile',
         'garch_volatility',
-        'atm_iv',
-        'iv_smile',
+        'realized_volatility',
+        'volatility_surface',
+        'meta_data',
     ];
 
     protected $casts = [
         'calculation_date' => 'date',
-        'historical_volatility' => 'decimal:4',
-        'realized_volatility' => 'decimal:4',
-        'garch_volatility' => 'decimal:4',
-        'atm_iv' => 'decimal:4',
-        'iv_smile' => 'array',
+        'period_days' => 'integer',
+        'historical_volatility' => 'decimal:6',
+        'implied_volatility_call' => 'decimal:6',
+        'implied_volatility_put' => 'decimal:6',
+        'volatility_skew' => 'decimal:6',
+        'volatility_smile' => 'decimal:6',
+        'garch_volatility' => 'decimal:6',
+        'realized_volatility' => 'decimal:6',
+        'volatility_surface' => 'array',
+        'meta_data' => 'array',
     ];
 
     /**
@@ -39,129 +48,159 @@ class Volatility extends Model
     }
 
     /**
-     * 依計算日期查詢
+     * 計算歷史波動率
      */
-    public function scopeForDate($query, $date)
+    public static function calculateHistoricalVolatility($stockId, $period = 20, $date = null)
     {
-        return $query->where('calculation_date', $date);
-    }
+        $date = $date ?: now();
+        
+        // 獲取價格數據
+        $prices = StockPrice::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $date)
+            ->orderBy('trade_date', 'desc')
+            ->limit($period + 1)
+            ->pluck('close')
+            ->reverse()
+            ->values();
 
-    /**
-     * 依期間查詢
-     */
-    public function scopeForPeriod($query, $period)
-    {
-        return $query->where('period', $period);
-    }
-
-    /**
-     * 取得最新的波動率
-     */
-    public function scopeLatest($query)
-    {
-        return $query->orderBy('calculation_date', 'desc');
-    }
-
-    /**
-     * 取得波動率錐形數據
-     */
-    public static function getVolatilityCone($stockId, $lookback = 252)
-    {
-        $endDate = now();
-        $startDate = now()->subDays($lookback);
-
-        $periods = ['7', '14', '21', '30', '60', '90'];
-        $percentiles = [10, 25, 50, 75, 90];
-
-        $cone = [];
-
-        foreach ($periods as $period) {
-            $volatilities = self::where('stock_id', $stockId)
-                ->where('period', $period)
-                ->whereBetween('calculation_date', [$startDate, $endDate])
-                ->pluck('historical_volatility')
-                ->sort()
-                ->values();
-
-            if ($volatilities->isEmpty()) {
-                continue;
-            }
-
-            $cone[$period] = [];
-            foreach ($percentiles as $percentile) {
-                $index = (int) (($percentile / 100) * ($volatilities->count() - 1));
-                $cone[$period]["p{$percentile}"] = $volatilities[$index];
-            }
-
-            // 加入當前值
-            $current = self::where('stock_id', $stockId)
-                ->where('period', $period)
-                ->latest('calculation_date')
-                ->value('historical_volatility');
-
-            $cone[$period]['current'] = $current;
-        }
-
-        return $cone;
-    }
-
-    /**
-     * 取得波動率微笑數據
-     */
-    public function getSmileDataAttribute()
-    {
-        if (!$this->iv_smile) {
+        if ($prices->count() < $period + 1) {
             return null;
         }
 
-        // 格式化波動率微笑數據
-        $smileData = [];
-        foreach ($this->iv_smile as $strike => $iv) {
-            $smileData[] = [
-                'strike' => $strike,
-                'iv' => $iv,
-                'moneyness' => $this->calculateMoneyness($strike),
-            ];
+        // 計算日報酬率
+        $returns = [];
+        for ($i = 1; $i <= $period; $i++) {
+            $returns[] = log($prices[$i] / $prices[$i - 1]);
         }
 
-        return collect($smileData)->sortBy('strike')->values();
+        // 計算標準差
+        $mean = array_sum($returns) / count($returns);
+        $variance = 0;
+        
+        foreach ($returns as $return) {
+            $variance += pow($return - $mean, 2);
+        }
+        
+        $variance /= (count($returns) - 1);
+        $stdDev = sqrt($variance);
+        
+        // 年化波動率
+        return $stdDev * sqrt(252);
     }
 
     /**
-     * 計算 Moneyness
+     * 計算實現波動率 (Realized Volatility)
      */
-    private function calculateMoneyness($strike)
+    public static function calculateRealizedVolatility($stockId, $period = 20, $date = null)
     {
-        $spotPrice = $this->stock->latestPrice->close_price ?? 0;
+        $date = $date ?: now();
+        
+        $prices = StockPrice::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $date)
+            ->orderBy('trade_date', 'desc')
+            ->limit($period)
+            ->get();
 
-        if ($spotPrice > 0) {
-            return $strike / $spotPrice;
+        if ($prices->count() < $period) {
+            return null;
         }
 
-        return null;
+        $squaredReturns = 0;
+        
+        foreach ($prices as $price) {
+            $logReturn = log($price->high / $price->low);
+            $squaredReturns += pow($logReturn, 2);
+        }
+        
+        // Parkinson volatility estimator
+        return sqrt($squaredReturns / (4 * $period * log(2))) * sqrt(252);
     }
 
     /**
-     * 計算期限結構
+     * 計算 EWMA 波動率
      */
-    public static function getTermStructure($stockId, $date = null)
+    public static function calculateEWMAVolatility($stockId, $lambda = 0.94, $period = 20, $date = null)
     {
-        $date = $date ?? now();
+        $date = $date ?: now();
+        
+        $prices = StockPrice::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $date)
+            ->orderBy('trade_date', 'desc')
+            ->limit($period + 1)
+            ->pluck('close')
+            ->reverse()
+            ->values();
 
-        $volatilities = self::where('stock_id', $stockId)
-            ->where('calculation_date', $date)
-            ->orderBy('period')
-            ->get()
-            ->map(function ($vol) {
-                return [
-                    'period' => $vol->period,
-                    'days' => (int) $vol->period,
-                    'hv' => $vol->historical_volatility,
-                    'iv' => $vol->atm_iv,
-                    'rv' => $vol->realized_volatility,
+        if ($prices->count() < $period + 1) {
+            return null;
+        }
+
+        $variance = 0;
+        $weight = 1;
+        $totalWeight = 0;
+
+        for ($i = $period; $i > 0; $i--) {
+            $return = log($prices[$i] / $prices[$i - 1]);
+            $variance += $weight * pow($return, 2);
+            $totalWeight += $weight;
+            $weight *= $lambda;
+        }
+
+        $variance /= $totalWeight;
+        
+        return sqrt($variance * 252);
+    }
+
+    /**
+     * 取得最新的波動率數據
+     */
+    public function scopeLatest($query, $stockId = null)
+    {
+        $query->orderBy('calculation_date', 'desc');
+        
+        if ($stockId) {
+            $query->where('stock_id', $stockId);
+        }
+        
+        return $query;
+    }
+
+    /**
+     * 取得特定期間的波動率
+     */
+    public function scopeByPeriod($query, $period)
+    {
+        return $query->where('period_days', $period);
+    }
+
+    /**
+     * 計算波動率錐 (Volatility Cone)
+     */
+    public static function calculateVolatilityCone($stockId, $periods = [10, 20, 30, 60, 90])
+    {
+        $cone = [];
+        
+        foreach ($periods as $period) {
+            $volatilities = self::where('stock_id', $stockId)
+                ->where('period_days', $period)
+                ->orderBy('calculation_date', 'desc')
+                ->limit(252)
+                ->pluck('historical_volatility')
+                ->toArray();
+            
+            if (count($volatilities) > 0) {
+                sort($volatilities);
+                $cone[$period] = [
+                    'min' => $volatilities[0],
+                    'p25' => $volatilities[intval(count($volatilities) * 0.25)],
+                    'median' => $volatilities[intval(count($volatilities) * 0.5)],
+                    'p75' => $volatilities[intval(count($volatilities) * 0.75)],
+                    'max' => end($volatilities),
+                    'current' => $volatilities[count($volatilities) - 1],
                 ];
-            });
-
-        return $volatilities;
+            }
+        }
+        
+        return $cone;
     }
 }

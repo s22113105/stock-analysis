@@ -13,28 +13,18 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     zip \
     unzip \
-    libzip-dev \
     libpq-dev \
-    libfreetype6-dev \
-    libjpeg62-turbo-dev \
-    libmcrypt-dev \
-    vim \
-    nodejs \
-    npm \
-    supervisor \
-    cron \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
-
-# Install Redis extension
-RUN pecl install redis && docker-php-ext-enable redis
-
-# Install Python and required packages for ML
-RUN apt-get install -y python3 python3-pip python3-venv
-RUN pip3 install --break-system-packages numpy pandas scikit-learn
+    libzip-dev \
+    supervisor
 
 # Clear cache
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
+
+# Install Redis extension
+RUN pecl install redis && docker-php-ext-enable redis
 
 # Get latest Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
@@ -47,7 +37,10 @@ RUN mkdir -p /home/$user/.composer && \
 # Set working directory
 WORKDIR /var/www
 
-# Copy existing application directory permissions
-COPY --chown=$user:$user . /var/www
+# Copy existing application directory
+COPY . /var/www
+
+# Set permissions
+RUN chown -R $user:$user /var/www
 
 USER $user

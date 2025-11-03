@@ -61,7 +61,9 @@
       <v-menu>
         <template v-slot:activator="{ props }">
           <v-btn icon v-bind="props">
-            <v-icon>mdi-account-circle</v-icon>
+            <v-avatar size="32">
+              <v-icon>mdi-account-circle</v-icon>
+            </v-avatar>
           </v-btn>
         </template>
         <v-list>
@@ -69,7 +71,7 @@
             <v-list-item-title>個人資料</v-list-item-title>
           </v-list-item>
           <v-list-item @click="settings">
-            <v-list-item-title>設定</v-list-item-title>
+            <v-list-item-title>系統設定</v-list-item-title>
           </v-list-item>
           <v-divider></v-divider>
           <v-list-item @click="logout">
@@ -108,11 +110,11 @@ export default {
     const router = useRouter()
     const route = useRoute()
     const theme = useTheme()
-
+    
     const drawer = ref(true)
     const miniVariant = ref(false)
     const notifications = ref(3)
-
+    
     const menuItems = ref([
       {
         title: '儀表板',
@@ -120,13 +122,13 @@ export default {
         to: '/'
       },
       {
-        title: '股票行情',
+        title: '股票報價',
         icon: 'mdi-chart-line',
         to: '/stocks'
       },
       {
-        title: '選擇權',
-        icon: 'mdi-chart-bell-curve',
+        title: '選擇權鏈',
+        icon: 'mdi-format-list-bulleted',
         to: '/options'
       },
       {
@@ -136,7 +138,7 @@ export default {
       },
       {
         title: '波動率分析',
-        icon: 'mdi-wave',
+        icon: 'mdi-chart-bell-curve',
         to: '/volatility'
       },
       {
@@ -155,17 +157,17 @@ export default {
         to: '/realtime'
       },
       {
-        title: '報表',
+        title: '報表分析',
         icon: 'mdi-file-chart',
         to: '/reports'
       },
       {
-        title: '設定',
+        title: '系統設定',
         icon: 'mdi-cog',
         to: '/settings'
       }
     ])
-
+    
     const pageTitle = computed(() => {
       const currentRoute = menuItems.value.find(item => item.to === route.path)
       return currentRoute ? currentRoute.title : '選擇權交易系統'
