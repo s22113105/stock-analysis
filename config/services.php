@@ -31,4 +31,15 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | TWSE API 設定
+    |--------------------------------------------------------------------------
+    */
+    'twse' => [
+        'base_url' => env('TWSE_API_URL', 'https://openapi.twse.com.tw'),
+        'timeout' => env('TWSE_API_TIMEOUT', 30),
+        'retries' => env('TWSE_API_RETRIES', 3),
+    ],
+
 ];
