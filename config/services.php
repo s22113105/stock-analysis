@@ -37,9 +37,9 @@ return [
     |--------------------------------------------------------------------------
     */
     'twse' => [
-        'base_url' => env('TWSE_API_URL', 'https://openapi.twse.com.tw'),
-        'timeout' => env('TWSE_API_TIMEOUT', 30),
-        'retries' => env('TWSE_API_RETRIES', 3),
+        'base_url' => env('TWSE_BASE_URL', 'https://openapi.twse.com.tw'),
+        'timeout' => env('TWSE_TIMEOUT', 30),
+        'retries' => env('TWSE_RETRIES', 3),
     ],
 
 ];

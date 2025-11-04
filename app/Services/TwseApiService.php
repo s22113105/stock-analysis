@@ -21,63 +21,31 @@ class TwseApiService
     }
 
     /**
-     * 取得上市公司基本資料
-     */
-    public function getListedCompanies()
-    {
-        $endpoint = '/opendata/t187ap03_L';
-
-        $response = $this->makeRequest($endpoint);
-
-        if ($response) {
-            return collect($response)->map(function ($item) {
-                return [
-                    'symbol' => $item['公司代號'] ?? null,
-                    'name' => $item['公司簡稱'] ?? null,
-                    'name_en' => $item['英文簡稱'] ?? null,
-                    'industry' => $item['產業別'] ?? null,
-                    'address' => $item['住址'] ?? null,
-                    'chairman' => $item['董事長'] ?? null,
-                    'general_manager' => $item['總經理'] ?? null,
-                    'spokesperson' => $item['發言人'] ?? null,
-                    'establishment_date' => $item['成立日期'] ?? null,
-                    'listing_date' => $item['上市日期'] ?? null,
-                    'website' => $item['網址'] ?? null,
-                ];
-            });
-        }
-
-        return collect();
-    }
-
-    /**
-     * 取得每日收盤行情（全部）
+     * 取得每日收盤行情
      */
     public function getStockDayAll($date = null)
     {
         $date = $date ?: now()->format('Ymd');
-        $endpoint = "/exchangeReport/MI_INDEX";
+        $endpoint = "/exchangeReport/STOCK_DAY_ALL";
 
         $params = [
             'response' => 'json',
-            'date' => $date,
-            'type' => 'ALL',
+            'date' => $date
         ];
 
         $response = $this->makeRequest($endpoint, $params);
 
-        if ($response && isset($response['data9'])) {
-            return collect($response['data9'])->map(function ($item) {
+        if ($response && isset($response['data'])) {
+            return collect($response['data'])->map(function ($item) {
                 return [
                     'symbol' => $item[0] ?? null,
                     'name' => $item[1] ?? null,
-                    'volume' => $this->parseVolume($item[2] ?? 0),
+                    'volume' => $this->parseNumber($item[2] ?? 0),
                     'turnover' => $this->parseNumber($item[4] ?? 0),
                     'open' => $this->parsePrice($item[5] ?? 0),
                     'high' => $this->parsePrice($item[6] ?? 0),
                     'low' => $this->parsePrice($item[7] ?? 0),
                     'close' => $this->parsePrice($item[8] ?? 0),
-                    'change_sign' => $item[9] ?? null,
                     'change' => $this->parsePrice($item[10] ?? 0),
                 ];
             });
@@ -87,114 +55,47 @@ class TwseApiService
     }
 
     /**
-     * 取得個股每日收盤行情
+     * 取得個股資料
      */
     public function getStockDay($symbol, $date = null)
     {
-        $date = $date ?: now()->format('Ym01');
+        $date = $date ?: now()->format('Ym');
         $endpoint = "/exchangeReport/STOCK_DAY";
 
         $params = [
             'response' => 'json',
-            'date' => $date,
-            'stockNo' => $symbol,
+            'date' => $date . '01',
+            'stockNo' => $symbol
         ];
 
         $response = $this->makeRequest($endpoint, $params);
 
         if ($response && isset($response['data'])) {
-            return collect($response['data'])->map(function ($item) {
-                $dateString = $this->convertToWesternDate($item[0] ?? null);
-
+            $lastData = collect($response['data'])->last();
+            if ($lastData) {
                 return [
-                    'date' => $dateString,
-                    'volume' => $this->parseVolume($item[1] ?? 0),
-                    'turnover' => $this->parseNumber($item[2] ?? 0),
-                    'open' => $this->parsePrice($item[3] ?? 0),
-                    'high' => $this->parsePrice($item[4] ?? 0),
-                    'low' => $this->parsePrice($item[5] ?? 0),
-                    'close' => $this->parsePrice($item[6] ?? 0),
-                    'change' => $this->parsePrice($item[7] ?? 0),
-                    'transactions' => $this->parseNumber($item[8] ?? 0),
+                    'symbol' => $symbol,
+                    'date' => $lastData[0] ?? null,
+                    'volume' => $this->parseNumber($lastData[1] ?? 0),
+                    'turnover' => $this->parseNumber($lastData[2] ?? 0),
+                    'open' => $this->parsePrice($lastData[3] ?? 0),
+                    'high' => $this->parsePrice($lastData[4] ?? 0),
+                    'low' => $this->parsePrice($lastData[5] ?? 0),
+                    'close' => $this->parsePrice($lastData[6] ?? 0),
+                    'change' => $this->parsePrice($lastData[7] ?? 0),
                 ];
-            });
+            }
         }
 
-        return collect();
-    }
-
-    /**
-     * 取得本益比、殖利率等資料
-     */
-    public function getStockPERatio($date = null)
-    {
-        $date = $date ?: now()->format('Ymd');
-        $endpoint = "/exchangeReport/BWIBBU_ALL";
-
-        $params = [
-            'response' => 'json',
-            'date' => $date,
-        ];
-
-        $response = $this->makeRequest($endpoint, $params);
-
-        if ($response && isset($response['data'])) {
-            return collect($response['data'])->map(function ($item) {
-                return [
-                    'symbol' => $item[0] ?? null,
-                    'name' => $item[1] ?? null,
-                    'dividend_yield' => $this->parseNumber($item[2] ?? 0),
-                    'dividend_year' => $item[3] ?? null,
-                    'pe_ratio' => $this->parseNumber($item[4] ?? 0),
-                    'pb_ratio' => $this->parseNumber($item[5] ?? 0),
-                    'financial_report_date' => $item[6] ?? null,
-                ];
-            });
-        }
-
-        return collect();
-    }
-
-    /**
-     * 取得融資融券餘額
-     */
-    public function getMarginTrading($date = null)
-    {
-        $date = $date ?: now()->format('Ymd');
-        $endpoint = "/exchangeReport/MI_MARGN";
-
-        $params = [
-            'response' => 'json',
-            'date' => $date,
-            'selectType' => 'ALL',
-        ];
-
-        $response = $this->makeRequest($endpoint, $params);
-
-        if ($response && isset($response['data'])) {
-            return collect($response['data'])->map(function ($item) {
-                return [
-                    'symbol' => $item[0] ?? null,
-                    'name' => $item[1] ?? null,
-                    'margin_purchase' => $this->parseNumber($item[2] ?? 0),
-                    'margin_sale' => $this->parseNumber($item[3] ?? 0),
-                    'margin_balance' => $this->parseNumber($item[4] ?? 0),
-                    'short_sale' => $this->parseNumber($item[5] ?? 0),
-                    'short_cover' => $this->parseNumber($item[6] ?? 0),
-                    'short_balance' => $this->parseNumber($item[7] ?? 0),
-                ];
-            });
-        }
-
-        return collect();
+        return [];
     }
 
     /**
      * 取得月營收資料
      */
-    public function getMonthlyRevenue()
+    public function getMonthlyRevenue($year = null, $month = null)
     {
-        $endpoint = '/opendata/t187ap05_L';
+        $endpoint = "/opendata/t187ap05_L";
 
         $response = $this->makeRequest($endpoint);
 
@@ -202,13 +103,13 @@ class TwseApiService
             return collect($response)->map(function ($item) {
                 return [
                     'symbol' => $item['公司代號'] ?? null,
-                    'name' => $item['公司簡稱'] ?? null,
-                    'year_month' => $item['營收年月'] ?? null,
-                    'revenue' => $this->parseNumber($item['營業收入'] ?? 0),
-                    'revenue_yoy' => $this->parseNumber($item['營收年增率'] ?? 0),
-                    'revenue_mom' => $this->parseNumber($item['營收月增率'] ?? 0),
-                    'revenue_ytd' => $this->parseNumber($item['累計營業收入'] ?? 0),
-                    'revenue_ytd_yoy' => $this->parseNumber($item['累計營收年增率'] ?? 0),
+                    'name' => $item['公司名稱'] ?? null,
+                    'year' => $item['資料年度'] ?? null,
+                    'month' => $item['資料月份'] ?? null,
+                    'revenue' => $this->parseNumber($item['當月營收'] ?? 0),
+                    'revenue_yoy' => $this->parseNumber($item['去年同月營收'] ?? 0),
+                    'revenue_mom' => $this->parseNumber($item['上月營收'] ?? 0),
+                    'accumulated_revenue' => $this->parseNumber($item['當月累計營收'] ?? 0),
                 ];
             });
         }
@@ -217,121 +118,38 @@ class TwseApiService
     }
 
     /**
-     * 取得三大法人買賣超
+     * 取得股利資料
      */
-    public function getInstitutionalTrading($date = null)
+    public function getDividendData()
     {
-        $date = $date ?: now()->format('Ymd');
-        $endpoint = "/exchangeReport/T86";
+        $endpoint = "/opendata/t187ap45_L";
 
-        $params = [
-            'response' => 'json',
-            'date' => $date,
-            'selectType' => 'ALL',
-        ];
+        $response = $this->makeRequest($endpoint);
 
-        $response = $this->makeRequest($endpoint, $params);
-
-        if ($response && isset($response['data'])) {
-            return collect($response['data'])->map(function ($item) {
-                return [
-                    'symbol' => $item[0] ?? null,
-                    'name' => $item[1] ?? null,
-                    'foreign_buy' => $this->parseVolume($item[2] ?? 0),
-                    'foreign_sell' => $this->parseVolume($item[3] ?? 0),
-                    'foreign_net' => $this->parseVolume($item[4] ?? 0),
-                    'trust_buy' => $this->parseVolume($item[5] ?? 0),
-                    'trust_sell' => $this->parseVolume($item[6] ?? 0),
-                    'trust_net' => $this->parseVolume($item[7] ?? 0),
-                    'dealer_buy' => $this->parseVolume($item[8] ?? 0),
-                    'dealer_sell' => $this->parseVolume($item[9] ?? 0),
-                    'dealer_net' => $this->parseVolume($item[10] ?? 0),
-                    'total_net' => $this->parseVolume($item[11] ?? 0),
-                ];
-            });
+        if ($response) {
+            return collect($response);
         }
 
         return collect();
     }
 
     /**
-     * 取得產業類別統計
-     */
-    public function getIndustryStatistics($date = null)
-    {
-        $date = $date ?: now()->format('Ymd');
-        $endpoint = "/exchangeReport/BFIAMU";
-
-        $params = [
-            'response' => 'json',
-            'date' => $date,
-        ];
-
-        $response = $this->makeRequest($endpoint, $params);
-
-        if ($response && isset($response['data'])) {
-            return collect($response['data'])->map(function ($item) {
-                return [
-                    'industry' => $item[0] ?? null,
-                    'total_companies' => $this->parseNumber($item[1] ?? 0),
-                    'total_capital' => $this->parseNumber($item[2] ?? 0),
-                    'total_market_value' => $this->parseNumber($item[3] ?? 0),
-                    'avg_pe_ratio' => $this->parseNumber($item[4] ?? 0),
-                ];
-            });
-        }
-
-        return collect();
-    }
-
-    /**
-     * 取得選擇權每日交易行情
-     */
-    public function getOptionDayAll($date = null)
-    {
-        $date = $date ?: now()->format('Ym');
-        $endpoint = "/exchangeReport/OPTION_DailyMarketView";
-
-        $params = [
-            'response' => 'json',
-            'date' => $date,
-        ];
-
-        $response = $this->makeRequest($endpoint, $params);
-
-        if ($response && isset($response['aaData'])) {
-            return collect($response['aaData'])->map(function ($item) {
-                return [
-                    'date' => $item[0] ?? null,
-                    'call_volume' => $this->parseNumber($item[1] ?? 0),
-                    'call_turnover' => $this->parseNumber($item[2] ?? 0),
-                    'put_volume' => $this->parseNumber($item[3] ?? 0),
-                    'put_turnover' => $this->parseNumber($item[4] ?? 0),
-                    'call_oi' => $this->parseNumber($item[5] ?? 0),
-                    'put_oi' => $this->parseNumber($item[6] ?? 0),
-                ];
-            });
-        }
-
-        return collect();
-    }
-
-    /**
-     * 發送 API 請求
+     * 發送 HTTP 請求
      */
     protected function makeRequest($endpoint, $params = [])
     {
         $url = $this->baseUrl . $endpoint;
-        $cacheKey = 'twse_api:' . md5($url . serialize($params));
 
-        // 檢查快取
+        // 加入快取機制
+        $cacheKey = 'twse_' . md5($url . json_encode($params));
+
         if (Cache::has($cacheKey)) {
-            Log::info('使用快取資料', ['endpoint' => $endpoint]);
+            Log::info("使用快取資料: {$cacheKey}");
             return Cache::get($cacheKey);
         }
 
         try {
-            Log::info('發送 TWSE API 請求', ['url' => $url, 'params' => $params]);
+            Log::info("發送請求至 TWSE API", ['url' => $url, 'params' => $params]);
 
             $response = Http::timeout($this->timeout)
                 ->retry($this->retries, 1000)
@@ -340,20 +158,18 @@ class TwseApiService
             if ($response->successful()) {
                 $data = $response->json();
 
-                // 快取 5 分鐘
-                Cache::put($cacheKey, $data, now()->addMinutes(5));
+                // 快取 10 分鐘
+                Cache::put($cacheKey, $data, now()->addMinutes(10));
 
                 return $data;
             }
 
-            Log::warning('TWSE API 請求失敗', [
+            Log::warning("TWSE API 回應非成功狀態", [
                 'status' => $response->status(),
                 'body' => $response->body()
             ]);
-
         } catch (\Exception $e) {
-            Log::error('TWSE API 請求錯誤', [
-                'endpoint' => $endpoint,
+            Log::error("TWSE API 請求失敗", [
                 'error' => $e->getMessage()
             ]);
         }
@@ -362,76 +178,29 @@ class TwseApiService
     }
 
     /**
-     * 解析價格
-     */
-    protected function parsePrice($value)
-    {
-        if (empty($value) || $value === '--' || $value === 'X0.00') {
-            return null;
-        }
-
-        $value = str_replace(',', '', $value);
-        return floatval($value);
-    }
-
-    /**
      * 解析數字
      */
     protected function parseNumber($value)
     {
-        if (empty($value) || $value === '--') {
+        if (!$value || $value === '--') {
             return 0;
         }
 
-        $value = str_replace(',', '', $value);
-        return intval($value);
+        // 移除逗號和其他非數字字符
+        $cleaned = str_replace(',', '', $value);
+
+        return floatval($cleaned);
     }
 
     /**
-     * 解析成交量
+     * 解析價格
      */
-    protected function parseVolume($value)
+    protected function parsePrice($value)
     {
-        if (empty($value) || $value === '--') {
-            return 0;
-        }
-
-        $value = str_replace(',', '', $value);
-        return intval($value);
-    }
-
-    /**
-     * 轉換民國年為西元年
-     */
-    protected function convertToWesternDate($dateString)
-    {
-        if (empty($dateString)) {
+        if (!$value || $value === '--' || $value === 'X' || $value === '-') {
             return null;
         }
 
-        // 格式：112/01/03
-        $parts = explode('/', $dateString);
-        if (count($parts) === 3) {
-            $year = intval($parts[0]) + 1911;
-            return Carbon::createFromFormat('Y/m/d', "{$year}/{$parts[1]}/{$parts[2]}")->format('Y-m-d');
-        }
-
-        return $dateString;
-    }
-
-    /**
-     * 解析日期
-     */
-    protected function parseDate($dateString)
-    {
-        if (empty($dateString)) {
-            return null;
-        }
-
-        try {
-            return Carbon::parse($dateString)->format('Y-m-d');
-        } catch (\Exception $e) {
-            return null;
-        }
+        return $this->parseNumber($value);
     }
 }
