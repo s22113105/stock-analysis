@@ -159,11 +159,11 @@ class FetchWarrantDataJob implements ShouldQueue
             $priceData = [
                 'option_id' => $option->id,
                 'trade_date' => $this->date,
-                'last' => rand(100, 500) / 100,
-                'bid' => rand(90, 480) / 100,
-                'ask' => rand(110, 520) / 100,
-                'volume' => rand(1000, 100000),
-                'open_interest' => rand(10000, 1000000),
+                'last' => \rand(100, 500) / 100,
+                'bid' => \rand(90, 480) / 100,
+                'ask' => \rand(110, 520) / 100,
+                'volume' => \rand(1000, 100000),
+                'open_interest' => \rand(10000, 1000000),
                 'created_at' => now(),
                 'updated_at' => now(),
             ];

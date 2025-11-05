@@ -83,12 +83,12 @@ class TestCrawlerCommand extends Command
             }
 
             // 產生隨機價格資料
-            $volatility = rand(1, 5) / 100; // 1-5% 波動
-            $open = $basePrice * (1 + (rand(-100, 100) / 10000));
-            $close = $open * (1 + (rand(-100, 100) / 10000) * $volatility);
-            $high = max($open, $close) * (1 + rand(0, 100) / 10000);
-            $low = min($open, $close) * (1 - rand(0, 100) / 10000);
-            $volume = rand(1000, 100000) * 1000;
+            $volatility = \rand(1, 5) / 100; // 1-5% 波動
+            $open = $basePrice * (1 + (\rand(-100, 100) / 10000));
+            $close = $open * (1 + (\rand(-100, 100) / 10000) * $volatility);
+            $high = max($open, $close) * (1 + \rand(0, 100) / 10000);
+            $low = min($open, $close) * (1 - \rand(0, 100) / 10000);
+            $volume = \rand(1000, 100000) * 1000;
 
             $change = $close - $basePrice;
             $changePercent = ($change / $basePrice) * 100;
