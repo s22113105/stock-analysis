@@ -40,6 +40,7 @@ return [
         'base_url' => env('TWSE_BASE_URL', 'https://openapi.twse.com.tw'),
         'timeout' => env('TWSE_TIMEOUT', 30),
         'retries' => env('TWSE_RETRIES', 3),
+        'cache_ttl' => env('TWSE_CACHE_TTL', 600), // 快取 10 分鐘
     ],
 
 ];
