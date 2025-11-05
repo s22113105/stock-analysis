@@ -89,8 +89,8 @@ class FetchMonthlyRevenueJob implements ShouldQueue
                 'updated_count' => $updateCount
             ]);
 
-            // 觸發相關事件
-            event(new \App\Events\MonthlyRevenueUpdated());
+            // 觸發相關事件（需要先建立 Event 類別）
+            // event(new \App\Events\MonthlyRevenueUpdated());
 
         } catch (\Exception $e) {
             DB::rollBack();

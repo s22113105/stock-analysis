@@ -113,8 +113,8 @@ class FetchWarrantDataJob implements ShouldQueue
                 'updated' => $updateCount
             ]);
 
-            // 觸發相關事件
-            event(new \App\Events\WarrantDataUpdated($this->date));
+            // 觸發相關事件（需要先建立 Event 類別）
+            // event(new \App\Events\WarrantDataUpdated($this->date));
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -175,7 +175,6 @@ class FetchWarrantDataJob implements ShouldQueue
                 ],
                 $priceData
             );
-
         } catch (\Exception $e) {
             Log::warning('權證價格資料爬取失敗', [
                 'warrant_code' => $warrantCode,
