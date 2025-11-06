@@ -1,5 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import DashboardLayout from '@/components/DashboardLayout.vue'
+import BlackScholesCalculator from '@/views/BlackScholesCalculator.vue'
+import VolatilityAnalysis from '@/views/VolatilityAnalysis.vue'
+
 // Views
 import Dashboard from '../views/Dashboard.vue'
 import Stocks from '../views/Stocks.vue'
@@ -86,6 +90,22 @@ const routes = [
     name: 'Login',
     component: Login,
     meta: { requiresAuth: false }
+  },
+  {
+    path: '/',
+    component: DashboardLayout,
+    children: [
+      {
+        path: 'black-scholes',
+        name: 'BlackScholes',
+        component: BlackScholesCalculator
+      },
+      {
+        path: 'volatility',
+        name: 'Volatility',
+        component: VolatilityAnalysis
+      }
+    ]
   }
 ]
 
