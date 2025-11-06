@@ -35,12 +35,27 @@ return [
     |--------------------------------------------------------------------------
     | TWSE API 設定
     |--------------------------------------------------------------------------
+    | 台灣證券交易所 API 設定
+    | 官方網站: https://www.twse.com.tw
     */
     'twse' => [
-        'base_url' => env('TWSE_BASE_URL', 'https://openapi.twse.com.tw'),
+        'base_url' => env('TWSE_BASE_URL', 'https://www.twse.com.tw'),
         'timeout' => env('TWSE_TIMEOUT', 30),
         'retries' => env('TWSE_RETRIES', 3),
-        'cache_ttl' => env('TWSE_CACHE_TTL', 600), // 快取 10 分鐘
+        'cache_ttl' => env('TWSE_CACHE_TTL', 600), // 快取時間 (秒)
+        'delay_between_requests' => env('TWSE_DELAY', 500), // 請求間隔 (毫秒)
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 爬蟲設定
+    |--------------------------------------------------------------------------
+    */
+    'crawler' => [
+        'enabled' => env('CRAWLER_ENABLED', true),
+        'schedule_time' => env('CRAWLER_SCHEDULE_TIME', '13:30'), // 每天執行時間
+        'batch_size' => env('CRAWLER_BATCH_SIZE', 50), // 批次處理數量
+        'max_retries' => env('CRAWLER_MAX_RETRIES', 3),
     ],
 
 ];

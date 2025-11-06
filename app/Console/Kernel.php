@@ -12,75 +12,34 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // 股票資料爬蟲 - 每個交易日下午 3:30 執行
-        $schedule->command('crawler:stocks --type=price')
+        // 每天下午 1:30 執行股票資料爬蟲
+        // 台股收盤時間是 13:30,爬蟲會在收盤後立即執行
+        $schedule->command('crawler:stocks')
+            ->dailyAt('13:30')
+            ->weekdays() // 只在平日執行 (週一到週五)
+            ->timezone('Asia/Taipei')
+            ->runInBackground() // 背景執行
+            ->withoutOverlapping() // 避免重複執行
+            ->appendOutputTo(storage_path('logs/crawler.log')); // 記錄輸出
+
+        // 如果要更保險,可以在下午 2:00 再執行一次 (給 TWSE API 更新時間)
+        $schedule->command('crawler:stocks')
+            ->dailyAt('14:00')
             ->weekdays()
-            ->dailyAt('15:30')
-            ->withoutOverlapping()
+            ->timezone('Asia/Taipei')
             ->runInBackground()
+            ->withoutOverlapping()
             ->appendOutputTo(storage_path('logs/crawler.log'));
 
-        // 月營收資料爬蟲 - 每月 10 號晚上 8 點執行
-        $schedule->command('crawler:stocks --type=revenue')
-            ->monthlyOn(10, '20:00')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->appendOutputTo(storage_path('logs/crawler.log'));
+        // 每週一早上 8:00 更新公司基本資料
+        // $schedule->command('crawler:company-info')
+        //     ->weeklyOn(1, '08:00')
+        //     ->timezone('Asia/Taipei');
 
-        // 選擇權資料爬蟲 - 每個交易日下午 3:45 執行
-        $schedule->command('crawler:options')
-            ->weekdays()
-            ->dailyAt('15:45')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->appendOutputTo(storage_path('logs/crawler.log'));
-
-        // 權證資料爬蟲 - 每個交易日下午 4:00 執行
-        $schedule->command('crawler:stocks --type=warrant')
-            ->weekdays()
-            ->dailyAt('16:00')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->appendOutputTo(storage_path('logs/crawler.log'));
-
-        // 清理過期的選擇權資料 - 每週日凌晨 2 點執行
-        $schedule->command('options:clean-expired')
-            ->weekly()
-            ->sundays()
-            ->at('02:00')
-            ->withoutOverlapping()
-            ->appendOutputTo(storage_path('logs/maintenance.log'));
-
-        // 計算波動率 - 每個交易日下午 4:30 執行
-        $schedule->command('volatility:calculate')
-            ->weekdays()
-            ->dailyAt('16:30')
-            ->withoutOverlapping()
-            ->runInBackground()
-            ->appendOutputTo(storage_path('logs/volatility.log'));
-
-        // 備份資料庫 - 每日凌晨 1 點執行
-        $schedule->command('backup:database')
+        // 每天晚上 11:00 清理過期的快取
+        $schedule->command('cache:prune-stale-tags')
             ->daily()
-            ->at('01:00')
-            ->withoutOverlapping()
-            ->appendOutputTo(storage_path('logs/backup.log'));
-
-        // 清理日誌檔案 - 每月 1 號凌晨 3 點執行
-        $schedule->command('logs:clear')
-            ->monthlyOn(1, '03:00')
-            ->withoutOverlapping()
-            ->appendOutputTo(storage_path('logs/maintenance.log'));
-
-        // Queue 重啟 - 每小時執行一次，避免記憶體洩漏
-        $schedule->command('queue:restart')
-            ->hourly()
-            ->withoutOverlapping();
-
-        // 失敗任務重試 - 每 30 分鐘執行一次
-        $schedule->command('queue:retry all')
-            ->everyThirtyMinutes()
-            ->withoutOverlapping();
+            ->timezone('Asia/Taipei');
     }
 
     /**
@@ -88,7 +47,7 @@ class Kernel extends ConsoleKernel
      */
     protected function commands(): void
     {
-        $this->load(__DIR__.'/Commands');
+        $this->load(__DIR__ . '/Commands');
 
         require base_path('routes/console.php');
     }
