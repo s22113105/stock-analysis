@@ -22,6 +22,16 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping() // 避免重複執行
             ->appendOutputTo(storage_path('logs/crawler.log')); // 記錄輸出
 
+        // 每天下午 1:45 執行選擇權資料爬蟲
+        // 給期交所一些時間更新資料
+        $schedule->command('crawler:options')
+            ->dailyAt('13:45')
+            ->weekdays()
+            ->timezone('Asia/Taipei')
+            ->runInBackground()
+            ->withoutOverlapping()
+            ->appendOutputTo(storage_path('logs/crawler.log'));
+
         // 如果要更保險,可以在下午 2:00 再執行一次 (給 TWSE API 更新時間)
         $schedule->command('crawler:stocks')
             ->dailyAt('14:00')

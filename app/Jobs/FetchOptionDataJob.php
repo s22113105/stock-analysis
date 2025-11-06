@@ -3,9 +3,8 @@
 namespace App\Jobs;
 
 use App\Models\Option;
-use App\Models\Stock;
 use App\Models\OptionPrice;
-use App\Services\TwseApiService;
+use App\Services\TaifexApiService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -20,7 +19,6 @@ class FetchOptionDataJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     protected $date;
-    protected $symbol;
 
     /**
      * 任務最大嘗試次數
@@ -30,55 +28,79 @@ class FetchOptionDataJob implements ShouldQueue
     /**
      * 任務超時時間
      */
-    public $timeout = 600;
+    public $timeout = 300;
 
     /**
      * Create a new job instance.
+     *
+     * @param string|null $date 日期 (Y-m-d)
      */
-    public function __construct($date = null, $symbol = null)
+    public function __construct($date = null)
     {
         $this->date = $date ?: now()->format('Y-m-d');
-        $this->symbol = $symbol;
     }
 
     /**
      * Execute the job.
      */
-    public function handle(TwseApiService $twseApi)
+    public function handle(TaifexApiService $taifexApi)
     {
-        Log::info('開始執行選擇權資料爬蟲', [
-            'date' => $this->date,
-            'symbol' => $this->symbol
+        $startTime = microtime(true);
+
+        Log::info('開始執行選擇權資料爬蟲 (TXO)', [
+            'date' => $this->date
         ]);
 
         try {
+            // 檢查是否為交易日
+            if (!$this->isTradingDay($this->date)) {
+                Log::info('非交易日，跳過執行', ['date' => $this->date]);
+                return;
+            }
+
+            // ❌ 移除：不再需要創建 TAIEX 記錄
+            // $twIndex = $this->ensureTaiwanIndex();
+
             DB::beginTransaction();
 
-            // 取得選擇權每日交易資料
-            $this->updateOptionDailyData($twseApi);
+            // 1. 取得選擇權每日交易資料
+            $optionsData = $taifexApi->getDailyOptionsReport($this->date);
 
-            // 取得選擇權結算價格
-            $this->updateOptionSettlementPrices($twseApi);
+            if ($optionsData->isEmpty()) {
+                Log::warning('無選擇權資料', ['date' => $this->date]);
+                DB::rollBack();
+                return;
+            }
 
-            // 計算隱含波動率
-            $this->calculateImpliedVolatility();
+            Log::info("取得 {$optionsData->count()} 筆選擇權資料");
 
-            // 更新未平倉量
-            $this->updateOpenInterest($twseApi);
+            // 2. 取得 Delta 值資料
+            $deltaData = $taifexApi->getDailyOptionsDelta($this->date);
+            $deltaMap = $this->buildDeltaMap($deltaData);
+
+            // 3. 處理選擇權資料
+            $this->processOptionsData($optionsData, $deltaMap);
+
+            // 4. 取得 Put/Call Ratio (儲存到 log 或其他地方)
+            $putCallRatio = $taifexApi->getPutCallRatio($this->date);
+            if (!empty($putCallRatio)) {
+                $this->logPutCallRatio($putCallRatio);
+            }
 
             DB::commit();
 
+            $duration = round(microtime(true) - $startTime, 2);
+
             Log::info('選擇權資料爬蟲執行完成', [
                 'date' => $this->date,
-                'symbol' => $this->symbol
+                'duration' => "{$duration}秒",
+                'processed' => $optionsData->count()
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
 
             Log::error('選擇權資料爬蟲執行失敗', [
                 'date' => $this->date,
-                'symbol' => $this->symbol,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -87,199 +109,124 @@ class FetchOptionDataJob implements ShouldQueue
         }
     }
 
+    // ❌ 移除：不再需要此方法
+    // protected function ensureTaiwanIndex() { ... }
+
     /**
-     * 更新選擇權每日資料
+     * 建立 Delta Map (option_code => delta)
      */
-    protected function updateOptionDailyData(TwseApiService $twseApi)
+    protected function buildDeltaMap($deltaData)
     {
-        $dateString = Carbon::parse($this->date)->format('Ym');
-        $optionData = $twseApi->getOptionDayAll($dateString);
+        $map = [];
 
-        if ($optionData->isEmpty()) {
-            Log::warning('無選擇權資料', ['date' => $this->date]);
-            return;
+        foreach ($deltaData as $item) {
+            $optionCode = $item['ContractCode'] ?? '';
+            $delta = floatval($item['Delta'] ?? 0);
+
+            if ($optionCode) {
+                $map[$optionCode] = $delta;
+            }
         }
 
-        foreach ($optionData as $data) {
-            // 這裡需要根據實際的選擇權代碼邏輯來處理
-            // 暫時使用簡化的邏輯
-            $this->processOptionData($data);
+        return $map;
+    }
+
+    /**
+     * 處理選擇權資料
+     * ✅ 修改：不需要 $twIndex 參數
+     */
+    protected function processOptionsData($optionsData, $deltaMap)
+    {
+        $insertCount = 0;
+        $updateCount = 0;
+
+        foreach ($optionsData as $data) {
+            try {
+                // 1. 建立或取得選擇權合約
+                // ✅ 修改：不再使用 stock_id
+                $option = Option::firstOrCreate(
+                    ['option_code' => $data['option_code']],
+                    [
+                        'underlying' => 'TXO',  // ✅ 使用 underlying
+                        'option_type' => $data['option_type'],
+                        'strike_price' => $data['strike_price'],
+                        'expiry_date' => $data['expiry_date'],
+                        'contract_size' => '50', // TXO 一口 = 指數 x 50
+                        'exercise_style' => 'european', // 歐式
+                        'is_active' => true,
+                        'meta_data' => [
+                            'underlying_name' => '臺指選擇權'
+                        ]
+                    ]
+                );
+
+                // 2. 取得 Delta 值
+                $delta = $deltaMap[$data['option_code']] ?? null;
+
+                // 3. 檢查價格資料是否存在
+                $existingPrice = OptionPrice::where('option_id', $option->id)
+                    ->where('trade_date', $this->date)
+                    ->first();
+
+                $priceData = [
+                    'bid' => $data['bid'] > 0 ? $data['bid'] : null,
+                    'ask' => $data['ask'] > 0 ? $data['ask'] : null,
+                    'last' => $data['close'] > 0 ? $data['close'] : null,
+                    'settlement' => $data['settlement'] > 0 ? $data['settlement'] : null,
+                    'volume' => $data['volume'],
+                    'open_interest' => $data['open_interest'],
+                    'delta' => $delta,
+                ];
+
+                if ($existingPrice) {
+                    // 更新
+                    $existingPrice->update($priceData);
+                    $updateCount++;
+                } else {
+                    // 新增
+                    OptionPrice::create(array_merge($priceData, [
+                        'option_id' => $option->id,
+                        'trade_date' => $this->date,
+                    ]));
+                    $insertCount++;
+                }
+            } catch (\Exception $e) {
+                Log::error('處理選擇權資料失敗', [
+                    'option_code' => $data['option_code'],
+                    'error' => $e->getMessage()
+                ]);
+                continue;
+            }
         }
 
-        Log::info('選擇權每日資料更新完成', [
+        Log::info('選擇權資料儲存完成', [
             'date' => $this->date,
-            'count' => $optionData->count()
+            'inserted' => $insertCount,
+            'updated' => $updateCount
         ]);
     }
 
     /**
-     * 處理單筆選擇權資料
+     * ✅ 修改：記錄 Put/Call Ratio 到 log
+     * (不再儲存到 stocks 表)
      */
-    protected function processOptionData($data)
+    protected function logPutCallRatio($putCallRatio)
     {
-        // 解析選擇權代碼，取得標的股票、履約價、到期日等資訊
-        // 這需要根據實際的代碼格式來實作
-
-        // 範例邏輯（需要根據實際情況調整）
-        if (!$this->symbol) {
-            // 處理所有選擇權
-            $this->updateAllOptions($data);
-        } else {
-            // 只處理特定標的的選擇權
-            $stock = Stock::where('symbol', $this->symbol)->first();
-            if ($stock) {
-                $this->updateStockOptions($stock, $data);
-            }
-        }
-    }
-
-    /**
-     * 更新所有選擇權
-     */
-    protected function updateAllOptions($data)
-    {
-        // 實作更新所有選擇權的邏輯
-        // 這需要根據 TWSE API 的實際回傳格式來處理
-    }
-
-    /**
-     * 更新特定股票的選擇權
-     */
-    protected function updateStockOptions(Stock $stock, $data)
-    {
-        $options = Option::where('stock_id', $stock->id)
-            ->where('expiry_date', '>=', $this->date)
-            ->get();
-
-        foreach ($options as $option) {
-            // 建立或更新選擇權價格
-            OptionPrice::updateOrCreate(
-                [
-                    'option_id' => $option->id,
-                    'trade_date' => $this->date
-                ],
-                [
-                    'open_price' => $data['open'] ?? null,
-                    'high_price' => $data['high'] ?? null,
-                    'low_price' => $data['low'] ?? null,
-                    'close_price' => $data['close'] ?? null,
-                    'settlement_price' => $data['settlement'] ?? null,
-                    'volume' => $data['volume'] ?? 0,
-                    'open_interest' => $data['open_interest'] ?? 0,
-                    'bid_price' => $data['bid'] ?? null,
-                    'ask_price' => $data['ask'] ?? null,
-                ]
-            );
-        }
-    }
-
-    /**
-     * 更新選擇權結算價格
-     */
-    protected function updateOptionSettlementPrices(TwseApiService $twseApi)
-    {
-        // 實作取得結算價格的邏輯
-        Log::info('更新選擇權結算價格', ['date' => $this->date]);
-    }
-
-    /**
-     * 計算隱含波動率
-     */
-    protected function calculateImpliedVolatility()
-    {
-        $options = Option::where('expiry_date', '>=', $this->date)
-            ->where('is_active', true)
-            ->get();
-
-        foreach ($options as $option) {
-            $optionPrice = $option->prices()
-                ->where('trade_date', $this->date)
-                ->first();
-
-            if (!$optionPrice || !$optionPrice->close_price) {
-                continue;
-            }
-
-            // 取得標的股票價格
-            $stockPrice = $option->stock->prices()
-                ->where('trade_date', $this->date)
-                ->first();
-
-            if (!$stockPrice) {
-                continue;
-            }
-
-            // 計算隱含波動率（這裡需要實作 Black-Scholes 反算）
-            $iv = $this->calculateIV(
-                $stockPrice->close_price,
-                $option->strike_price,
-                $option->option_type,
-                $optionPrice->close_price,
-                $this->getTimeToExpiry($option->expiry_date)
-            );
-
-            if ($iv !== null) {
-                $optionPrice->update(['implied_volatility' => $iv]);
-            }
+        if (empty($putCallRatio)) {
+            return;
         }
 
-        Log::info('隱含波動率計算完成', ['date' => $this->date]);
+        Log::info('當日 Put/Call Ratio', [
+            'date' => $this->date,
+            'ratio' => $putCallRatio
+        ]);
+
+        // TODO: 如果需要，可以建立專門的 put_call_ratios 表
+        // 或儲存到其他地方
     }
 
     /**
-     * 計算到期時間（年化）
-     */
-    protected function getTimeToExpiry($expiryDate)
-    {
-        $days = Carbon::parse($this->date)->diffInDays(Carbon::parse($expiryDate));
-        return $days / 365.0;
-    }
-
-    /**
-     * 計算隱含波動率（簡化版）
-     */
-    protected function calculateIV($spotPrice, $strikePrice, $optionType, $optionPrice, $timeToExpiry)
-    {
-        // 這裡應該實作 Newton-Raphson 方法來反算隱含波動率
-        // 暫時返回一個估計值
-        $moneyness = $spotPrice / $strikePrice;
-
-        if ($optionType == 'call') {
-            if ($moneyness > 1.1) {
-                // Deep ITM
-                return 0.15;
-            } elseif ($moneyness > 0.9) {
-                // ATM
-                return 0.20;
-            } else {
-                // OTM
-                return 0.25;
-            }
-        } else {
-            if ($moneyness < 0.9) {
-                // Deep ITM
-                return 0.15;
-            } elseif ($moneyness < 1.1) {
-                // ATM
-                return 0.20;
-            } else {
-                // OTM
-                return 0.25;
-            }
-        }
-    }
-
-    /**
-     * 更新未平倉量
-     */
-    protected function updateOpenInterest(TwseApiService $twseApi)
-    {
-        // 實作更新未平倉量的邏輯
-        Log::info('更新未平倉量', ['date' => $this->date]);
-    }
-
-    /**
-     * 判斷是否為交易日
+     * 檢查是否為交易日
      */
     protected function isTradingDay($date)
     {
@@ -290,9 +237,21 @@ class FetchOptionDataJob implements ShouldQueue
             return false;
         }
 
-        // 這裡可以加入國定假日的判斷
-        // 可以從資料庫或設定檔讀取假日清單
+        // TODO: 檢查國定假日
 
         return true;
+    }
+
+    /**
+     * 任務失敗時的處理
+     */
+    public function failed(\Throwable $exception)
+    {
+        Log::error('選擇權資料爬蟲任務失敗', [
+            'date' => $this->date,
+            'error' => $exception->getMessage()
+        ]);
+
+        // TODO: 發送通知
     }
 }

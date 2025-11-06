@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Option extends Model
@@ -12,7 +11,8 @@ class Option extends Model
     use HasFactory;
 
     protected $fillable = [
-        'stock_id',
+        // ❌ 移除 'stock_id',
+        'underlying',        // ✅ 新增
         'option_code',
         'option_type',
         'strike_price',
@@ -30,13 +30,14 @@ class Option extends Model
         'meta_data' => 'array',
     ];
 
+    // ❌ 移除 stock() 關聯
     /**
      * 所屬的股票
      */
-    public function stock(): BelongsTo
-    {
-        return $this->belongsTo(Stock::class);
-    }
+    // public function stock(): BelongsTo
+    // {
+    //     return $this->belongsTo(Stock::class);
+    // }
 
     /**
      * 選擇權價格資料
@@ -79,6 +80,22 @@ class Option extends Model
     }
 
     /**
+     * ✅ 新增：篩選標的 (TXO)
+     */
+    public function scopeUnderlying($query, $underlying)
+    {
+        return $query->where('underlying', $underlying);
+    }
+
+    /**
+     * ✅ 新增：只取 TXO
+     */
+    public function scopeTXO($query)
+    {
+        return $query->where('underlying', 'TXO');
+    }
+
+    /**
      * 尚未到期的選擇權
      */
     public function scopeNotExpired($query)
@@ -112,6 +129,7 @@ class Option extends Model
 
     /**
      * 檢查是否為價內 (In The Money)
+     * 需要提供現貨價格
      */
     public function isInTheMoney($spotPrice)
     {
@@ -123,15 +141,6 @@ class Option extends Model
     }
 
     /**
-     * 檢查是否為價平 (At The Money)
-     */
-    public function isAtTheMoney($spotPrice, $threshold = 0.01)
-    {
-        $percentageDiff = abs(($spotPrice - $this->strike_price) / $spotPrice);
-        return $percentageDiff <= $threshold;
-    }
-
-    /**
      * 檢查是否為價外 (Out of The Money)
      */
     public function isOutOfTheMoney($spotPrice)
@@ -140,33 +149,10 @@ class Option extends Model
     }
 
     /**
-     * 計算內含價值
+     * 檢查是否為價平 (At The Money)
      */
-    public function getIntrinsicValue($spotPrice)
+    public function isAtTheMoney($spotPrice, $threshold = 50)
     {
-        if ($this->option_type === 'call') {
-            return max(0, $spotPrice - $this->strike_price);
-        } else {
-            return max(0, $this->strike_price - $spotPrice);
-        }
-    }
-
-    /**
-     * 計算時間價值
-     */
-    public function getTimeValue($optionPrice, $spotPrice)
-    {
-        return max(0, $optionPrice - $this->getIntrinsicValue($spotPrice));
-    }
-
-    /**
-     * 取得相同到期日的選擇權鏈
-     */
-    public function getOptionChain()
-    {
-        return self::where('stock_id', $this->stock_id)
-            ->where('expiry_date', $this->expiry_date)
-            ->orderBy('strike_price')
-            ->get();
+        return abs($spotPrice - $this->strike_price) <= $threshold;
     }
 }
