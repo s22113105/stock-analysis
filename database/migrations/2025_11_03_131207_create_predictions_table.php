@@ -31,7 +31,6 @@ return new class extends Migration
             $table->text('notes')->nullable()->comment('備註');
             $table->timestamps();
             
-            $table->index(['predictable_type', 'predictable_id']);
             $table->index('prediction_date');
             $table->index('model_type');
         });
