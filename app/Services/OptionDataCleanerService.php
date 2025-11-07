@@ -53,20 +53,23 @@ class OptionDataCleanerService
      */
     protected function cleanSingleRecord(array $item, string $date): array
     {
-        // 解析選擇權代碼
+        // 使用 API 提供的資料
         $optionCode = $item['ContractCode'] ?? '';
-        $parsed = $this->parseOptionCode($optionCode);
+        $underlying = $item['Underlying'] ?? '';
+        $expiryMonth = $item['ExpirationMonth'] ?? '';
+        $optionType = $item['OptionType'] ?? 'unknown'; // call 或 put
+        $optionTypeZh = $item['OptionTypeZh'] ?? '';
 
         return [
             // === 基本資訊 ===
             'date' => $date,
             'option_code' => $this->cleanString($optionCode),
-            'underlying' => $parsed['underlying'],
-            'expiry_month' => $parsed['expiry_year'] . '-' . $parsed['expiry_month'],
-            'expiry_date' => $this->parseExpiryDate($item['ExpirationDate'] ?? ''),
+            'underlying' => $underlying,
+            'expiry_month' => $expiryMonth,
+            'expiry_date' => $item['ExpirationDate'] ?? null, // API 已經解析好了
             'strike_price' => $this->cleanPrice($item['StrikePrice'] ?? 0),
-            'option_type' => $parsed['option_type'], // call 或 put
-            'option_type_zh' => $parsed['option_type'] === 'call' ? '買權' : '賣權',
+            'option_type' => $optionType, // call 或 put
+            'option_type_zh' => $optionTypeZh,
 
             // === 價格資訊 ===
             'open_price' => $this->cleanPrice($item['OpeningPrice'] ?? 0),
@@ -81,11 +84,11 @@ class OptionDataCleanerService
             ),
 
             // === 交易量資訊 ===
-            'volume_general' => $this->cleanVolume($item['TradingVolume'] ?? 0), // 一般交易時段
-            'volume_afterhours' => $this->cleanVolume($item['AfterHoursVolume'] ?? 0), // 盤後
-            'volume_total' => $this->cleanVolume($item['TotalVolume'] ?? 0), // 合計
+            'volume_general' => $this->cleanVolume($item['VolumeGeneral'] ?? 0), // 一般交易時段
+            'volume_afterhours' => $this->cleanVolume($item['VolumeAfterHours'] ?? 0), // 盤後
+            'volume_total' => $this->cleanVolume($item['TradingVolume'] ?? 0), // 合計
             'open_interest' => $this->cleanVolume($item['OpenInterest'] ?? 0), // 未平倉
-            'open_interest_change' => $this->cleanVolume($item['OpenInterestChange'] ?? 0),
+            'open_interest_change' => 0, // API 沒有提供此欄位
 
             // === 買賣報價 ===
             'best_bid' => $this->cleanPrice($item['BestBid'] ?? 0),
