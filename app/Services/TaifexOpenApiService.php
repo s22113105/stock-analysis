@@ -8,8 +8,8 @@ use Illuminate\Support\Collection;
 use Carbon\Carbon;
 
 /**
- * 期交所 OpenAPI 服務（正確版本）
- * 根據實際 API 結構調整
+ * 期交所 OpenAPI 服務（最終版本）
+ * API 只返回最新資料，不支援歷史查詢
  */
 class TaifexOpenApiService
 {
@@ -25,6 +25,8 @@ class TaifexOpenApiService
 
     /**
      * 取得選擇權每日交易行情（只取 TXO）
+     *
+     * 注意：API 只返回最新資料，$date 參數僅用於記錄
      */
     public function getDailyOptionsData(?string $date = null): Collection
     {
@@ -32,7 +34,8 @@ class TaifexOpenApiService
 
         Log::info('呼叫期交所 OpenAPI', [
             'url' => $url,
-            'date' => $date ?? 'latest'
+            'requested_date' => $date ?? 'latest',
+            'note' => 'API 只返回最新資料'
         ]);
 
         try {
@@ -59,16 +62,34 @@ class TaifexOpenApiService
                 return collect();
             }
 
+            // 檢測實際返回的日期
+            $actualDate = null;
+            if (!empty($data)) {
+                $actualDate = $this->parseTradeDate($data[0]);
+            }
+
             Log::info('API 請求成功', [
-                'total_records' => count($data)
+                'total_records' => count($data),
+                'actual_date' => $actualDate,
+                'requested_date' => $date
             ]);
 
-            // 過濾並轉換資料
-            $filtered = $this->filterAndTransform($data, $date);
+            // 如果指定日期與實際日期不符，發出警告
+            if ($date && $actualDate && $date !== $actualDate) {
+                Log::warning('API 返回的日期與請求不符', [
+                    'requested' => $date,
+                    'actual' => $actualDate,
+                    'note' => 'API 只提供最新資料，將使用實際日期'
+                ]);
+            }
+
+            // 過濾並轉換資料（不再過濾日期）
+            $filtered = $this->filterAndTransform($data);
 
             Log::info('TXO 資料過濾完成', [
                 'original_count' => count($data),
-                'filtered_count' => $filtered->count()
+                'filtered_count' => $filtered->count(),
+                'actual_date' => $actualDate
             ]);
 
             return $filtered;
@@ -82,25 +103,17 @@ class TaifexOpenApiService
     }
 
     /**
-     * 過濾並轉換資料（只保留 TXO）
+     * 過濾並轉換資料（只保留 TXO，不過濾日期）
      */
-    protected function filterAndTransform(array $data, ?string $targetDate = null): Collection
+    protected function filterAndTransform(array $data): Collection
     {
         $results = collect();
 
         foreach ($data as $item) {
-            // 過濾條件 1: Contract 必須是 TXO
+            // 只過濾條件: Contract 必須是 TXO
             $contract = $item['Contract'] ?? '';
             if ($contract !== 'TXO') {
                 continue;
-            }
-
-            // 過濾條件 2: 如果指定日期，只要該日期的資料
-            if ($targetDate) {
-                $tradeDate = $this->parseTradeDate($item);
-                if ($tradeDate && $tradeDate !== $targetDate) {
-                    continue;
-                }
             }
 
             // 轉換並清理資料
@@ -121,10 +134,10 @@ class TaifexOpenApiService
     {
         try {
             // 基本欄位
-            $contract = $item['Contract'] ?? '';  // TXO
-            $contractMonth = $item['ContractMonth(Week)'] ?? '';  // 202511F1 或 202511
+            $contract = $item['Contract'] ?? '';
+            $contractMonth = $item['ContractMonth(Week)'] ?? '';
             $strikePrice = $this->cleanNumber($item['StrikePrice'] ?? 0);
-            $callPut = $item['CallPut'] ?? '';  // 買權/賣權
+            $callPut = $item['CallPut'] ?? '';
 
             // 驗證必要欄位
             if (empty($contract) || empty($contractMonth) || $strikePrice <= 0) {
@@ -138,7 +151,6 @@ class TaifexOpenApiService
             }
 
             // 建立完整的選擇權代碼
-            // TXO + 202511F1 + C/P + 24700
             $typeCode = $optionType === 'call' ? 'C' : 'P';
             $optionCode = $contract . $contractMonth . $typeCode . intval($strikePrice);
 
@@ -164,11 +176,10 @@ class TaifexOpenApiService
             $spread = $bestAsk > 0 && $bestBid > 0 ? $bestAsk - $bestBid : 0;
             $midPrice = $bestAsk > 0 && $bestBid > 0 ? ($bestAsk + $bestBid) / 2 : 0;
 
-            // 日期處理
+            // 日期處理（使用實際日期）
             $date = $this->parseTradeDate($item);
 
             return [
-                // 基本資訊
                 'option_code' => $optionCode,
                 'underlying' => 'TXO',
                 'contract' => $contract,
@@ -176,38 +187,24 @@ class TaifexOpenApiService
                 'option_type' => $optionType,
                 'expiry_date' => $expiryDate,
                 'expiry_month' => $contractMonth,
-
-                // 價格資訊
                 'open_price' => $openPrice,
                 'high_price' => $highPrice,
                 'low_price' => $lowPrice,
                 'close_price' => $closePrice,
                 'settlement_price' => $settlementPrice,
-
-                // 漲跌（API 沒提供，可以後續計算）
                 'change' => 0,
                 'change_percent' => 0,
-
-                // 交易量資訊
                 'volume_total' => $volume,
-                'volume_general' => 0,  // API 沒細分
+                'volume_general' => 0,
                 'volume_afterhours' => 0,
                 'open_interest' => $openInterest,
-
-                // 買賣報價
                 'best_bid' => $bestBid,
                 'best_ask' => $bestAsk,
-                'bid_volume' => 0,  // API 沒提供
+                'bid_volume' => 0,
                 'ask_volume' => 0,
-
-                // 計算欄位
                 'spread' => $spread,
                 'mid_price' => $midPrice,
-
-                // 日期
                 'date' => $date ?? now()->format('Y-m-d'),
-
-                // 原始資料
                 'raw_data' => $item
             ];
         } catch (\Exception $e) {
@@ -224,66 +221,48 @@ class TaifexOpenApiService
      */
     protected function parseOptionType(string $callPut): ?string
     {
-        // 中文
-        if (mb_strpos($callPut, '買權') !== false || $callPut === '買') {
+        if (mb_strpos($callPut, '買權') !== false || mb_strpos($callPut, '買') !== false) {
             return 'call';
         }
-        if (mb_strpos($callPut, '賣權') !== false || $callPut === '賣') {
+        if (mb_strpos($callPut, '賣權') !== false || mb_strpos($callPut, '賣') !== false) {
             return 'put';
         }
-
-        // 英文
         if (stripos($callPut, 'Call') !== false || $callPut === 'C') {
             return 'call';
         }
         if (stripos($callPut, 'Put') !== false || $callPut === 'P') {
             return 'put';
         }
-
         return null;
     }
 
     /**
      * 解析到期日
-     *
-     * @param string $contractMonth 例如: 202511F1, 202511W1, 202511
-     * @return string|null
      */
     protected function parseExpiryDate(string $contractMonth): ?string
     {
         try {
-            // F 代表 Future（月選擇權），W 代表 Week（週選擇權）
-
-            // 週選擇權: 202511W1, 202511W2, 202511W3, 202511W4
+            // 週選擇權: 202511W1
             if (preg_match('/^(\d{4})(\d{2})W(\d+)$/', $contractMonth, $matches)) {
                 $year = $matches[1];
                 $month = $matches[2];
                 $weekNum = intval($matches[3]);
-
                 $date = Carbon::create($year, $month, 1);
                 $nthWednesday = $date->nthOfMonth($weekNum, Carbon::WEDNESDAY);
-
                 return $nthWednesday->format('Y-m-d');
             }
 
-            // 月選擇權: 202511F1, 202511F2 或 202511
+            // 月選擇權: 202511F1 或 202511
             if (preg_match('/^(\d{4})(\d{2})(F\d+)?$/', $contractMonth, $matches)) {
                 $year = $matches[1];
                 $month = $matches[2];
-
-                // 月選擇權到期日是第三個週三
                 $date = Carbon::create($year, $month, 1);
                 $thirdWednesday = $date->nthOfMonth(3, Carbon::WEDNESDAY);
-
                 return $thirdWednesday->format('Y-m-d');
             }
 
             return null;
         } catch (\Exception $e) {
-            Log::warning('無法解析到期日', [
-                'contract_month' => $contractMonth,
-                'error' => $e->getMessage()
-            ]);
             return null;
         }
     }
@@ -300,33 +279,26 @@ class TaifexOpenApiService
         }
 
         try {
-            // 格式: 20251107
             if (strlen($dateStr) === 8 && is_numeric($dateStr)) {
                 return Carbon::createFromFormat('Ymd', $dateStr)->format('Y-m-d');
             }
-
             return null;
         } catch (\Exception $e) {
-            Log::warning('日期解析失敗', ['date_str' => $dateStr]);
             return null;
         }
     }
 
     /**
      * 清理數字
-     * 處理: null, '-', '', 千分位
      */
     protected function cleanNumber($value): float
     {
-        // 處理 '-' 表示無資料
         if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
             return 0.0;
         }
-
         if (is_string($value)) {
             $value = str_replace(',', '', $value);
         }
-
         return floatval($value);
     }
 
@@ -338,11 +310,9 @@ class TaifexOpenApiService
         if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
             return 0;
         }
-
         if (is_string($value)) {
             $value = str_replace(',', '', $value);
         }
-
         return max(0, intval($value));
     }
 }
