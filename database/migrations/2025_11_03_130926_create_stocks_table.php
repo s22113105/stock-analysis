@@ -6,16 +6,13 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('stocks', function (Blueprint $table) {
             $table->id();
             $table->string('symbol', 20)->unique()->comment('股票代碼');
             $table->string('name', 100)->comment('股票名稱');
-            $table->string('exchange', 50)->default('TWSE')->comment('交易所');
+            $table->string('exchange', 20)->default('TWSE')->comment('交易所');
             $table->string('industry', 100)->nullable()->comment('產業別');
             $table->decimal('market_cap', 20, 2)->nullable()->comment('市值');
             $table->decimal('shares_outstanding', 20, 2)->nullable()->comment('流通股數');
@@ -24,14 +21,11 @@ return new class extends Migration
             $table->timestamps();
             
             $table->index('symbol');
-            $table->index('is_active');
             $table->index('exchange');
+            $table->index('is_active');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('stocks');

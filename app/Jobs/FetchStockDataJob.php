@@ -21,25 +21,18 @@ class FetchStockDataJob implements ShouldQueue
     protected $date;
     protected $symbol;
 
-    /**
-     * 任務最大嘗試次數
-     */
     public $tries = 3;
-
-    /**
-     * 任務超時時間
-     */
     public $timeout = 300;
 
     /**
      * Create a new job instance.
      *
-     * @param string|null $date 日期 (Y-m-d)
-     * @param string|null $symbol 股票代碼
+     * @param string $date 日期 (Y-m-d)
+     * @param string|null $symbol 股票代碼 (null = 全部)
      */
-    public function __construct($date = null, $symbol = null)
+    public function __construct(string $date, ?string $symbol = null)
     {
-        $this->date = $date ?: now()->format('Y-m-d');
+        $this->date = $date;
         $this->symbol = $symbol;
     }
 
@@ -48,11 +41,9 @@ class FetchStockDataJob implements ShouldQueue
      */
     public function handle(TwseApiService $twseApi)
     {
-        $startTime = microtime(true);
-
         Log::info('開始執行股票資料爬蟲', [
-            'symbol' => $this->symbol,
-            'date' => $this->date
+            'date' => $this->date,
+            'symbol' => $this->symbol ?? '全部'
         ]);
 
         try {
@@ -62,25 +53,18 @@ class FetchStockDataJob implements ShouldQueue
                 return;
             }
 
-            // 如果指定股票代碼
             if ($this->symbol) {
-                $this->fetchSingleStock($twseApi, $this->symbol);
+                // 單一股票
+                $this->processSingleStock($twseApi, $this->symbol);
             } else {
-                // 爬取所有股票
-                $this->fetchAllStocks($twseApi);
+                // 全部股票
+                $this->processAllStocks($twseApi);
             }
 
-            $duration = round(microtime(true) - $startTime, 2);
-
-            Log::info('股票資料爬蟲執行完成', [
-                'symbol' => $this->symbol ?: 'all',
-                'date' => $this->date,
-                'duration' => "{$duration}秒"
-            ]);
         } catch (\Exception $e) {
             Log::error('股票資料爬蟲執行失敗', [
-                'symbol' => $this->symbol,
                 'date' => $this->date,
+                'symbol' => $this->symbol,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -90,191 +74,176 @@ class FetchStockDataJob implements ShouldQueue
     }
 
     /**
-     * 爬取單一股票資料
+     * 處理單一股票
      */
-    protected function fetchSingleStock(TwseApiService $twseApi, $symbol)
-    {
-        Log::info("開始爬取股票: {$symbol}");
-
-        // 取得該股票當月所有資料
-        $stockData = $twseApi->getStockDay($symbol);
-
-        if ($stockData->isEmpty()) {
-            Log::warning("無法取得股票資料", ['symbol' => $symbol]);
-            return;
-        }
-
-        $this->saveStockData($stockData, $symbol);
-    }
-
-    /**
-     * 爬取所有股票資料
-     */
-    protected function fetchAllStocks(TwseApiService $twseApi)
-    {
-        // 取得所有股票代碼
-        $symbols = $twseApi->getAllStockSymbols();
-
-        Log::info("準備爬取 {$symbols->count()} 支股票");
-
-        $successCount = 0;
-        $failCount = 0;
-
-        foreach ($symbols as $symbol) {
-            try {
-                $this->fetchSingleStock($twseApi, $symbol);
-                $successCount++;
-
-                // 避免請求過快,稍微延遲
-                usleep(500000); // 0.5 秒
-
-            } catch (\Exception $e) {
-                $failCount++;
-                Log::error("爬取股票失敗", [
-                    'symbol' => $symbol,
-                    'error' => $e->getMessage()
-                ]);
-                continue;
-            }
-        }
-
-        Log::info('批次爬取完成', [
-            'total' => $symbols->count(),
-            'success' => $successCount,
-            'failed' => $failCount
-        ]);
-    }
-
-    /**
-     * 儲存股票資料到資料庫
-     */
-    protected function saveStockData($stockData, $symbol)
+    protected function processSingleStock(TwseApiService $twseApi, string $symbol)
     {
         DB::beginTransaction();
 
         try {
-            $insertCount = 0;
-            $updateCount = 0;
-            $skipCount = 0;
+            // 取得股票資料
+            $stockData = $twseApi->getStockDayAll($this->date);
+            
+            // 找到指定股票
+            $data = $stockData->firstWhere('symbol', $symbol);
 
-            foreach ($stockData as $data) {
-                // 確保股票記錄存在
-                $stock = Stock::firstOrCreate(
-                    ['symbol' => $symbol],
-                    [
-                        'name' => $data['name'],
-                        'exchange' => 'TWSE',
-                        'is_active' => true,
-                    ]
-                );
-
-                // 如果股票名稱有變化,更新它
-                if ($stock->name !== $data['name'] && !empty($data['name'])) {
-                    $stock->update(['name' => $data['name']]);
-                }
-
-                // 檢查這筆資料是否已存在
-                $existingPrice = StockPrice::where('stock_id', $stock->id)
-                    ->where('trade_date', $data['trade_date'])
-                    ->first();
-
-                if ($existingPrice) {
-                    // 資料已存在,更新它
-                    $existingPrice->update([
-                        'open' => $data['open'],
-                        'high' => $data['high'],
-                        'low' => $data['low'],
-                        'close' => $data['close'],
-                        'volume' => $data['volume'],
-                        'turnover' => $data['turnover'],
-                        'change' => $data['change'],
-                        'change_percent' => $this->calculateChangePercent($data),
-                    ]);
-                    $updateCount++;
-                } else {
-                    // 新增資料
-                    StockPrice::create([
-                        'stock_id' => $stock->id,
-                        'trade_date' => $data['trade_date'],
-                        'open' => $data['open'],
-                        'high' => $data['high'],
-                        'low' => $data['low'],
-                        'close' => $data['close'],
-                        'volume' => $data['volume'],
-                        'turnover' => $data['turnover'],
-                        'change' => $data['change'],
-                        'change_percent' => $this->calculateChangePercent($data),
-                    ]);
-                    $insertCount++;
-                }
+            if (!$data) {
+                Log::warning('找不到股票資料', [
+                    'symbol' => $symbol,
+                    'date' => $this->date
+                ]);
+                DB::rollBack();
+                return;
             }
+
+            // 儲存資料
+            $this->saveStockData([$data]);
 
             DB::commit();
 
-            Log::info("股票資料儲存完成", [
+            Log::info('股票資料爬蟲執行完成', [
                 'symbol' => $symbol,
-                'inserted' => $insertCount,
-                'updated' => $updateCount,
-                'skipped' => $skipCount
+                'date' => $this->date
             ]);
+
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error("儲存股票資料失敗", [
-                'symbol' => $symbol,
-                'error' => $e->getMessage()
-            ]);
             throw $e;
         }
     }
 
     /**
-     * 計算漲跌幅百分比
+     * 處理所有股票
      */
-    protected function calculateChangePercent($data)
+    protected function processAllStocks(TwseApiService $twseApi)
     {
-        if (!$data['close'] || !$data['change']) {
-            return 0;
+        DB::beginTransaction();
+
+        try {
+            // 取得所有股票資料
+            $stockData = $twseApi->getStockDayAll($this->date);
+
+            if ($stockData->isEmpty()) {
+                Log::warning('無股票資料', ['date' => $this->date]);
+                DB::rollBack();
+                return;
+            }
+
+            // 儲存資料
+            $this->saveStockData($stockData->toArray());
+
+            DB::commit();
+
+            Log::info('股票資料爬蟲執行完成', [
+                'date' => $this->date,
+                'count' => $stockData->count()
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * 儲存股票資料
+     */
+    protected function saveStockData(array $stockData)
+    {
+        $insertCount = 0;
+        $updateCount = 0;
+
+        foreach ($stockData as $data) {
+            // 建立或更新股票
+            $stock = Stock::updateOrCreate(
+                ['symbol' => $data['symbol']],
+                [
+                    'name' => $data['name'],
+                    'exchange' => 'TWSE',
+                    'is_active' => true,
+                ]
+            );
+
+            // 建立或更新價格
+            $price = StockPrice::updateOrCreate(
+                [
+                    'stock_id' => $stock->id,
+                    'trade_date' => $this->date
+                ],
+                [
+                    'open' => $data['open'],
+                    'high' => $data['high'],
+                    'low' => $data['low'],
+                    'close' => $data['close'],
+                    'volume' => $data['volume'],
+                    'turnover' => $data['turnover'] ?? 0,
+                    'change' => $data['change'] ?? 0,
+                    'change_percent' => $this->calculateChangePercent($data),
+                ]
+            );
+
+            if ($price->wasRecentlyCreated) {
+                $insertCount++;
+            } else {
+                $updateCount++;
+            }
         }
 
-        $previousClose = $data['close'] - $data['change'];
+        Log::info('資料儲存完成', [
+            'inserted' => $insertCount,
+            'updated' => $updateCount
+        ]);
+    }
 
-        if ($previousClose <= 0) {
-            return 0;
+    /**
+     * 計算漲跌百分比
+     */
+    protected function calculateChangePercent(array $data): float
+    {
+        $previousClose = $data['close'] - ($data['change'] ?? 0);
+        
+        if ($previousClose > 0) {
+            return round((($data['change'] ?? 0) / $previousClose) * 100, 2);
         }
-
-        return round(($data['change'] / $previousClose) * 100, 2);
+        
+        return 0;
     }
 
     /**
      * 檢查是否為交易日
      */
-    protected function isTradingDay($date)
+    protected function isTradingDay(string $date): bool
     {
         $carbon = Carbon::parse($date);
-
-        // 週末不是交易日
+        
+        // 檢查是否為週末
         if ($carbon->isWeekend()) {
             return false;
         }
 
-        // TODO: 可以從資料庫或 API 檢查是否為國定假日
-        // 目前僅檢查週末
-
-        return true;
+        // 檢查是否為國定假日
+        $holidays = $this->getTaiwanHolidays($carbon->year);
+        
+        return !in_array($date, $holidays);
     }
 
     /**
-     * 任務失敗時的處理
+     * 取得台灣國定假日
      */
-    public function failed(\Throwable $exception)
+    protected function getTaiwanHolidays(int $year): array
     {
-        Log::error('股票資料爬蟲任務失敗', [
-            'symbol' => $this->symbol,
-            'date' => $this->date,
-            'error' => $exception->getMessage()
-        ]);
-
-        // TODO: 發送通知給管理員
-        // Notification::send($admins, new JobFailedNotification($exception));
+        return [
+            // 2025年國定假日
+            "{$year}-01-01", // 元旦
+            "{$year}-01-27", // 除夕
+            "{$year}-01-28", // 春節
+            "{$year}-01-29", // 春節
+            "{$year}-01-30", // 春節
+            "{$year}-02-28", // 和平紀念日
+            "{$year}-04-04", // 兒童節
+            "{$year}-04-05", // 清明節
+            "{$year}-05-31", // 端午節
+            "{$year}-10-10", // 國慶日
+        ];
     }
 }

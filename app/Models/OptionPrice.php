@@ -13,30 +13,34 @@ class OptionPrice extends Model
     protected $fillable = [
         'option_id',
         'trade_date',
-        'open_price',
-        'high_price',
-        'low_price',
-        'close_price',
-        'settlement_price',
+        'open',
+        'high',
+        'low',
+        'close',
         'volume',
         'open_interest',
-        'bid_price',
-        'ask_price',
         'implied_volatility',
+        'delta',
+        'gamma',
+        'theta',
+        'vega',
+        'rho',
     ];
 
     protected $casts = [
         'trade_date' => 'date',
-        'open_price' => 'decimal:2',
-        'high_price' => 'decimal:2',
-        'low_price' => 'decimal:2',
-        'close_price' => 'decimal:2',
-        'settlement_price' => 'decimal:2',
+        'open' => 'decimal:2',
+        'high' => 'decimal:2',
+        'low' => 'decimal:2',
+        'close' => 'decimal:2',
         'volume' => 'integer',
         'open_interest' => 'integer',
-        'bid_price' => 'decimal:2',
-        'ask_price' => 'decimal:2',
-        'implied_volatility' => 'decimal:4',
+        'implied_volatility' => 'decimal:6',
+        'delta' => 'decimal:6',
+        'gamma' => 'decimal:6',
+        'theta' => 'decimal:6',
+        'vega' => 'decimal:6',
+        'rho' => 'decimal:6',
     ];
 
     /**
@@ -56,24 +60,24 @@ class OptionPrice extends Model
     }
 
     /**
-     * 計算買賣價差
+     * 計算中間價
      */
-    public function getSpreadAttribute()
+    public function getMidPriceAttribute(): ?float
     {
-        if ($this->bid_price && $this->ask_price) {
-            return $this->ask_price - $this->bid_price;
+        if ($this->high && $this->low) {
+            return ($this->high + $this->low) / 2;
         }
         return null;
     }
 
     /**
-     * 計算中間價
+     * 計算買賣價差
      */
-    public function getMidPriceAttribute()
+    public function getSpreadAttribute(): ?float
     {
-        if ($this->bid_price && $this->ask_price) {
-            return ($this->bid_price + $this->ask_price) / 2;
+        if ($this->high && $this->low) {
+            return $this->high - $this->low;
         }
-        return $this->close_price;
+        return null;
     }
 }

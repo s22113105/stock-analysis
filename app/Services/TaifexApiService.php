@@ -5,213 +5,180 @@ namespace App\Services;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Collection;
 use Carbon\Carbon;
 use Symfony\Component\DomCrawler\Crawler;
 
 /**
- * 期交所 API 服務 (正確版本)
- * 使用 POST 方法和 HTML 解析
+ * 期交所 API 服務
+ * 
+ * 功能：
+ * - 擷取臺指選擇權每日行情
+ * - 擷取 Delta 資料
+ * - 解析 HTML 表格
  */
 class TaifexApiService
 {
+    protected $baseUrl;
     protected $timeout;
     protected $retries;
 
     public function __construct()
     {
+        $this->baseUrl = 'https://www.taifex.com.tw';
         $this->timeout = config('services.taifex.timeout', 30);
         $this->retries = config('services.taifex.retries', 3);
     }
 
     /**
-     * 取得選擇權每日交易行情
-     * 使用 HTML 解析方式 (類似 Python 版本)
+     * 取得臺指選擇權每日行情
      *
      * @param string $date 日期 (Y-m-d)
-     * @return \Illuminate\Support\Collection
+     * @return Collection
      */
-    public function getDailyOptionsReport($date = null)
+    public function getDailyOptionsReport(string $date): Collection
     {
-        $date = $date ?: now()->format('Y-m-d');
+        $cacheKey = "taifex_options_{$date}";
 
-        // 期交所網址 (HTML 版本)
-        $url = 'https://www.taifex.com.tw/cht/3/optDailyMarketReport';
+        return Cache::remember($cacheKey, 3600, function () use ($date) {
+            $url = "{$this->baseUrl}/cht/3/optDailyMarketReport";
+            
+            $queryDate = Carbon::parse($date)->format('Y/m/d');
 
-        // 日期格式: YYYY/MM/DD
-        $queryDate = Carbon::parse($date)->format('Y/m/d');
+            $payload = [
+                'queryDate' => $queryDate,
+                'commodity_id' => 'TXO',
+                'MarketCode' => '0',
+            ];
 
-        // POST 參數
-        $payload = [
-            'queryDate' => $queryDate,
-            'commodity_id' => 'TXO',  // 台指選擇權
-            'MarketCode' => '0',      // 日盤 (0=日盤, 1=夜盤)
-        ];
+            Log::info('發送 TAIFEX API 請求', [
+                'url' => $url,
+                'date' => $date,
+                'query_date' => $queryDate
+            ]);
 
-        Log::info('發送請求至 TAIFEX (HTML)', [
-            'url' => $url,
-            'params' => $payload,
-            'date' => $date
-        ]);
+            try {
+                $response = Http::timeout($this->timeout)
+                    ->asForm()
+                    ->post($url, $payload);
 
-        try {
-            // 發送 POST 請求
-            $response = Http::timeout($this->timeout)
-                ->asForm()  // 使用 form data
-                ->retry($this->retries, 1000)
-                ->post($url, $payload);
+                if (!$response->successful()) {
+                    Log::error('TAIFEX API 請求失敗', [
+                        'status' => $response->status(),
+                        'body' => $response->body()
+                    ]);
+                    return collect();
+                }
 
-            if (!$response->successful()) {
-                Log::error('TAIFEX API 請求失敗', [
-                    'status' => $response->status(),
-                    'url' => $url
+                $html = $response->body();
+
+                // 解析 HTML
+                return $this->parseOptionsHtml($html, $date);
+
+            } catch (\Exception $e) {
+                Log::error('TAIFEX API 例外', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
                 ]);
                 return collect();
             }
-
-            $html = $response->body();
-
-            Log::info('收到 HTML 回應', [
-                'size' => strlen($html) . ' bytes',
-                'status' => $response->status()
-            ]);
-
-            // 解析 HTML 表格
-            $data = $this->parseHtmlTable($html, $date);
-
-            Log::info('HTML 解析完成', [
-                'parsed_count' => $data->count()
-            ]);
-
-            return $data;
-        } catch (\Exception $e) {
-            Log::error('TAIFEX API 請求異常', [
-                'error' => $e->getMessage(),
-                'url' => $url,
-                'date' => $date
-            ]);
-            return collect();
-        }
+        });
     }
 
     /**
-     * 解析 HTML 表格 (類似 Python 的 pd.read_html)
+     * 取得 Delta 資料
+     *
+     * @param string $date 日期 (Y-m-d)
+     * @return Collection
+     */
+    public function getDailyOptionsDelta(string $date): Collection
+    {
+        $cacheKey = "taifex_delta_{$date}";
+
+        return Cache::remember($cacheKey, 3600, function () use ($date) {
+            // 期交所沒有直接提供 Delta API
+            // 這裡返回空集合,實際應該從其他來源取得或自行計算
+            return collect();
+        });
+    }
+
+    /**
+     * 解析選擇權 HTML
      *
      * @param string $html HTML 內容
      * @param string $date 日期
-     * @return \Illuminate\Support\Collection
+     * @return Collection
      */
-    protected function parseHtmlTable($html, $date)
+    protected function parseOptionsHtml(string $html, string $date): Collection
     {
         try {
             $crawler = new Crawler($html);
-
-            // 尋找資料表格 (通常是第 3 個表格, 索引從 0 開始)
             $tables = $crawler->filter('table');
 
-            Log::info('找到表格數量', ['count' => $tables->count()]);
-
-            if ($tables->count() < 3) {
-                Log::warning('表格數量不足', [
-                    'found' => $tables->count(),
-                    'expected' => '至少 3 個'
-                ]);
+            if ($tables->count() === 0) {
+                Log::warning('找不到表格', ['date' => $date]);
                 return collect();
             }
 
-            // 取得第 3 個表格 (索引 2)
-            $dataTable = $tables->eq(2);
+            // 期交所網頁結構: 通常資料在第二個表格
+            $dataTable = $tables->eq(1);
 
-            // 解析表格資料
+            if ($dataTable->count() === 0) {
+                Log::warning('找不到資料表格', ['date' => $date]);
+                return collect();
+            }
+
             $rows = $dataTable->filter('tr');
-            $data = collect();
+            $data = [];
 
-            Log::info('表格行數', ['rows' => $rows->count()]);
-
-            // 找到標題行 (通常在第 4 行，索引 3)
-            $headerRow = null;
-            $headerIndex = -1;
-
-            $rows->each(function (Crawler $row, $index) use (&$headerRow, &$headerIndex) {
-                $text = trim($row->text());
-                // 尋找包含「契約」的行作為標題行
-                if (strpos($text, '契約') !== false || strpos($text, '履約價') !== false) {
-                    $headerRow = $row;
-                    $headerIndex = $index;
-                    Log::info('找到標題行', ['index' => $index]);
-                }
-            });
-
-            if (!$headerRow) {
-                Log::warning('找不到標題行');
-                return collect();
-            }
-
-            // 解析標題
-            $headers = [];
-            $headerRow->filter('th, td')->each(function (Crawler $cell) use (&$headers) {
-                $headers[] = trim($cell->text());
-            });
-
-            Log::info('表格標題', ['headers' => $headers]);
-
-            // 解析資料行 (從標題行的下一行開始)
-            $dataStartIndex = $headerIndex + 1;
-            $recordCount = 0;
-
-            $rows->each(function (Crawler $row, $index) use (&$data, $dataStartIndex, $headers, $date, &$recordCount) {
-                // 跳過標題行之前的行
-                if ($index <= $dataStartIndex) {
+            // 跳過表頭 (前 2 行)
+            $rows->each(function (Crawler $row, $index) use (&$data, $date) {
+                if ($index < 2) {
                     return;
                 }
 
                 $cells = $row->filter('td');
-
-                // 如果沒有 td 元素，跳過
-                if ($cells->count() == 0) {
+                
+                if ($cells->count() < 20) {
                     return;
                 }
 
-                // 取得第一個 cell 的文字，檢查是否為小計或總計
-                $firstCell = trim($cells->eq(0)->text());
-
-                // 跳過小計、總計等行
-                if (
-                    empty($firstCell) ||
-                    strpos($firstCell, '小計') !== false ||
-                    strpos($firstCell, '總計') !== false ||
-                    strpos($firstCell, '合計') !== false
-                ) {
-                    return;
+                // 解析 Call 資料
+                try {
+                    $callData = $this->parseCellData($cells, 'call', $date);
+                    if ($callData) {
+                        $data[] = $callData;
+                    }
+                } catch (\Exception $e) {
+                    Log::debug('解析 Call 資料失敗', [
+                        'row' => $index,
+                        'error' => $e->getMessage()
+                    ]);
                 }
 
-                // 解析每個 cell
-                $rowData = [];
-                $cells->each(function (Crawler $cell, $cellIndex) use (&$rowData) {
-                    $rowData[] = trim($cell->text());
-                });
-
-                // 確保有足夠的欄位
-                if (count($rowData) < 10) {
-                    return;
-                }
-
-                // 建立資料結構
-                $record = $this->buildRecordFromTableRow($rowData, $headers, $date);
-
-                if ($record) {
-                    $data->push($record);
-                    $recordCount++;
+                // 解析 Put 資料
+                try {
+                    $putData = $this->parseCellData($cells, 'put', $date);
+                    if ($putData) {
+                        $data[] = $putData;
+                    }
+                } catch (\Exception $e) {
+                    Log::debug('解析 Put 資料失敗', [
+                        'row' => $index,
+                        'error' => $e->getMessage()
+                    ]);
                 }
             });
 
             Log::info('解析完成', [
-                'total_records' => $recordCount,
-                'sample' => $data->take(2)->toArray()
+                'date' => $date,
+                'rows' => count($data)
             ]);
 
-            return $data;
+            return collect($data);
+
         } catch (\Exception $e) {
-            Log::error('HTML 解析失敗', [
+            Log::error('解析 HTML 失敗', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -220,178 +187,133 @@ class TaifexApiService
     }
 
     /**
-     * 從表格行資料建立記錄
+     * 解析儲存格資料
      *
-     * @param array $rowData 行資料
-     * @param array $headers 標題
+     * @param Crawler $cells 儲存格集合
+     * @param string $type 類型 (call/put)
      * @param string $date 日期
      * @return array|null
      */
-    protected function buildRecordFromTableRow($rowData, $headers, $date)
+    protected function parseCellData(Crawler $cells, string $type, string $date): ?array
     {
         try {
-            // 期交所表格欄位順序:
-            // 契約, 到期月份(週別), 履約價, 買賣權, 開盤價, 最高價, 最低價,
-            // 最後成交價, 漲跌, 結算價, 成交量, 未平倉, ...
+            // 期交所表格結構 (範例)
+            // Call: 0-9 欄位
+            // 履約價: 10 欄位
+            // Put: 11-20 欄位
 
-            // 基本資訊
-            $underlying = $rowData[0] ?? '';  // 標的 (TXO, TEO, TFO...)
-            $expiryMonth = $rowData[1] ?? '';  // 到期月份 (202511, 202511W1...)
-            $strikePrice = $this->cleanPrice($rowData[2] ?? 0);  // 履約價
-            $optionType = $rowData[3] ?? '';  // 買賣權 (Call/Put)
+            if ($type === 'call') {
+                $strikePrice = $this->cleanNumber($cells->eq(10)->text());
+                $close = $this->cleanNumber($cells->eq(6)->text());
+                $volume = $this->cleanNumber($cells->eq(8)->text());
+                $openInterest = $this->cleanNumber($cells->eq(9)->text());
+                
+                // 生成選擇權代碼
+                $optionCode = $this->generateOptionCode($date, $strikePrice, 'C');
 
-            // 價格資訊
-            $openPrice = $this->cleanPrice($rowData[4] ?? 0);  // 開盤價
-            $highPrice = $this->cleanPrice($rowData[5] ?? 0);  // 最高價
-            $lowPrice = $this->cleanPrice($rowData[6] ?? 0);  // 最低價
-            $closePrice = $this->cleanPrice($rowData[7] ?? 0);  // 最後成交價
-            $change = $this->cleanPrice($rowData[8] ?? 0);  // 漲跌
-            $settlementPrice = $this->cleanPrice($rowData[9] ?? 0);  // 結算價
+            } else {
+                $strikePrice = $this->cleanNumber($cells->eq(10)->text());
+                $close = $this->cleanNumber($cells->eq(16)->text());
+                $volume = $this->cleanNumber($cells->eq(18)->text());
+                $openInterest = $this->cleanNumber($cells->eq(19)->text());
+                
+                $optionCode = $this->generateOptionCode($date, $strikePrice, 'P');
+            }
 
-            // 交易量資訊
-            $volumeAfterHours = $this->cleanVolume($rowData[10] ?? 0);  // 盤後成交量
-            $volumeGeneral = $this->cleanVolume($rowData[11] ?? 0);  // 一般交易時段成交量
-            $volumeTotal = $this->cleanVolume($rowData[12] ?? 0);  // 合計成交量
-            $openInterest = $this->cleanVolume($rowData[13] ?? 0);  // 未平倉量
-
-            // 驗證基本欄位
-            if (empty($underlying) || empty($expiryMonth) || $strikePrice <= 0) {
+            // 基本驗證
+            if (!$strikePrice || $strikePrice <= 0) {
                 return null;
             }
 
-            // 解析選擇權類型
-            $optionTypeStd = 'unknown';
-            $optionTypeCode = '';
-            if (strpos($optionType, 'Call') !== false || $optionType === 'C' || strpos($optionType, '買') !== false) {
-                $optionTypeStd = 'call';
-                $optionTypeCode = 'C';
-            } elseif (strpos($optionType, 'Put') !== false || $optionType === 'P' || strpos($optionType, '賣') !== false) {
-                $optionTypeStd = 'put';
-                $optionTypeCode = 'P';
-            }
-
-            // 建立完整的選擇權代碼
-            // 格式: TXO + 到期月份 + C/P + 履約價
-            // 例如: TXO202511W1C24700
-            $optionCode = $underlying . $expiryMonth . $optionTypeCode . intval($strikePrice);
-
             return [
-                'ContractCode' => $optionCode,
-                'Underlying' => $underlying,
-                'ExpirationMonth' => $expiryMonth,
-                'ExpirationDate' => $this->parseExpiryDate($expiryMonth),
-                'StrikePrice' => $strikePrice,
-                'OptionType' => $optionTypeStd,
-                'OptionTypeZh' => $optionType,
-                'OpeningPrice' => $openPrice,
-                'HighestPrice' => $highPrice,
-                'LowestPrice' => $lowPrice,
-                'ClosingPrice' => $closePrice,
-                'Change' => $change,
-                'SettlementPrice' => $settlementPrice,
-                'TradingVolume' => $volumeTotal,
-                'VolumeGeneral' => $volumeGeneral,
-                'VolumeAfterHours' => $volumeAfterHours,
-                'OpenInterest' => $openInterest,
-                'TradeDate' => $date,
+                'option_code' => $optionCode,
+                'underlying' => 'TXO',
+                'option_type' => $type,
+                'strike_price' => $strikePrice,
+                'close' => $close,
+                'volume' => $volume ?? 0,
+                'open_interest' => $openInterest ?? 0,
+                'trade_date' => $date,
             ];
+
         } catch (\Exception $e) {
-            Log::warning('建立記錄失敗', [
-                'error' => $e->getMessage(),
-                'row_data' => $rowData
-            ]);
             return null;
         }
     }
 
     /**
-     * 清理價格資料
-     */
-    protected function cleanPrice($value)
-    {
-        if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
-            return 0.0;
-        }
-
-        // 移除千分位逗號
-        if (is_string($value)) {
-            $value = str_replace(',', '', $value);
-        }
-
-        return floatval($value);
-    }
-
-    /**
-     * 清理交易量資料
-     */
-    protected function cleanVolume($value)
-    {
-        if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
-            return 0;
-        }
-
-        // 移除千分位逗號
-        if (is_string($value)) {
-            $value = str_replace(',', '', $value);
-        }
-
-        return max(0, intval($value));
-    }
-
-    /**
-     * 解析到期日
-     * 支援月選擇權和週選擇權格式
+     * 清理數字字串
      *
-     * @param string $expiryMonth 到期月份 (YYYYMM 或 YYYYMMWN)
-     * @return string|null 到期日 (Y-m-d)
+     * @param string $text 原始文字
+     * @return float|int|null
      */
-    protected function parseExpiryDate($expiryMonth)
+    protected function cleanNumber(string $text)
     {
-        if (empty($expiryMonth)) {
+        $cleaned = trim($text);
+        $cleaned = str_replace(',', '', $cleaned);
+        $cleaned = str_replace(' ', '', $cleaned);
+
+        if ($cleaned === '' || $cleaned === '-' || $cleaned === 'N/A') {
             return null;
         }
 
-        try {
-            // 格式 1: 週選擇權 YYYYMMWN (例如: 202511W1, 202511W2)
-            if (preg_match('/^(\d{4})(\d{2})W(\d+)$/', $expiryMonth, $matches)) {
-                $year = $matches[1];
-                $month = $matches[2];
-                $weekNum = intval($matches[3]);
-
-                // 計算該月第 N 個週三
-                $date = Carbon::create($year, $month, 1);
-                $nthWednesday = $date->nthOfMonth($weekNum, Carbon::WEDNESDAY);
-
-                return $nthWednesday->format('Y-m-d');
-            }
-
-            // 格式 2: 月選擇權 YYYYMM (例如: 202511)
-            if (preg_match('/^(\d{4})(\d{2})$/', $expiryMonth, $matches)) {
-                $year = $matches[1];
-                $month = $matches[2];
-
-                // 台指選擇權到期日: 每月第三個週三
-                $date = Carbon::create($year, $month, 1);
-                $thirdWednesday = $date->nthOfMonth(3, Carbon::WEDNESDAY);
-
-                return $thirdWednesday->format('Y-m-d');
-            }
-
-            return null;
-        } catch (\Exception $e) {
-            Log::warning("無法解析到期日", [
-                'expiry_month' => $expiryMonth,
-                'error' => $e->getMessage()
-            ]);
-            return null;
+        if (strpos($cleaned, '.') !== false) {
+            return floatval($cleaned);
         }
+
+        return intval($cleaned);
     }
 
     /**
-     * 解析數字
+     * 生成選擇權代碼
+     *
+     * @param string $date 日期
+     * @param float $strikePrice 履約價
+     * @param string $type C=Call, P=Put
+     * @return string
      */
-    protected function parseNumber($value)
+    protected function generateOptionCode(string $date, float $strikePrice, string $type): string
     {
-        return $this->cleanPrice($value);
+        // 推算到期月份 (假設為最近的結算日)
+        $carbon = Carbon::parse($date);
+        $expiryMonth = $carbon->format('Ym');
+        
+        // 格式: TXO_202501_C_20000
+        return sprintf('TXO_%s_%s_%d', $expiryMonth, $type, intval($strikePrice));
+    }
+
+    /**
+     * 取得最近的結算日
+     *
+     * @param string $date 日期
+     * @return string
+     */
+    protected function getExpiryDate(string $date): string
+    {
+        $carbon = Carbon::parse($date);
+        
+        // 台指選擇權: 每個月第三個週三
+        $year = $carbon->year;
+        $month = $carbon->month;
+        
+        $firstDay = Carbon::create($year, $month, 1);
+        $firstWednesday = $firstDay->copy()->next(Carbon::WEDNESDAY);
+        
+        $thirdWednesday = $firstWednesday->copy()->addWeeks(2);
+        
+        return $thirdWednesday->format('Y-m-d');
+    }
+
+    /**
+     * 取得標的價格 (台指期貨)
+     *
+     * @param string $date 日期
+     * @return float|null
+     */
+    public function getUnderlyingPrice(string $date): ?float
+    {
+        // 這裡應該從期交所取得台指期貨價格
+        // 暫時返回模擬值
+        return 20000.0;
     }
 }

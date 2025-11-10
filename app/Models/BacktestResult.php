@@ -11,23 +11,30 @@ class BacktestResult extends Model
     use HasFactory;
 
     protected $fillable = [
-        'stock_id',
         'strategy_name',
+        'stock_id',
         'start_date',
         'end_date',
         'initial_capital',
         'final_capital',
         'total_return',
+        'annual_return',
         'sharpe_ratio',
+        'sortino_ratio',
         'max_drawdown',
+        'win_rate',
         'total_trades',
         'winning_trades',
         'losing_trades',
-        'win_rate',
-        'avg_profit',
+        'avg_win',
         'avg_loss',
-        'strategy_params',
-        'daily_returns',
+        'profit_factor',
+        'volatility',
+        'strategy_parameters',
+        'equity_curve',
+        'trade_history',
+        'performance_metrics',
+        'notes',
     ];
 
     protected $casts = [
@@ -35,17 +42,20 @@ class BacktestResult extends Model
         'end_date' => 'date',
         'initial_capital' => 'decimal:2',
         'final_capital' => 'decimal:2',
-        'total_return' => 'decimal:4',
+        'total_return' => 'decimal:2',
+        'annual_return' => 'decimal:2',
         'sharpe_ratio' => 'decimal:4',
-        'max_drawdown' => 'decimal:4',
-        'total_trades' => 'integer',
-        'winning_trades' => 'integer',
-        'losing_trades' => 'integer',
-        'win_rate' => 'decimal:4',
-        'avg_profit' => 'decimal:2',
+        'sortino_ratio' => 'decimal:4',
+        'max_drawdown' => 'decimal:2',
+        'win_rate' => 'decimal:2',
+        'avg_win' => 'decimal:2',
         'avg_loss' => 'decimal:2',
-        'strategy_params' => 'array',
-        'daily_returns' => 'array',
+        'profit_factor' => 'decimal:4',
+        'volatility' => 'decimal:4',
+        'strategy_parameters' => 'array',
+        'equity_curve' => 'array',
+        'trade_history' => 'array',
+        'performance_metrics' => 'array',
     ];
 
     /**
@@ -57,7 +67,7 @@ class BacktestResult extends Model
     }
 
     /**
-     * 依策略名稱查詢
+     * 依策略查詢
      */
     public function scopeByStrategy($query, string $strategyName)
     {
@@ -70,62 +80,59 @@ class BacktestResult extends Model
     public function scopeDateRange($query, $startDate, $endDate)
     {
         return $query->where('start_date', '>=', $startDate)
-            ->where('end_date', '<=', $endDate);
+                     ->where('end_date', '<=', $endDate);
     }
 
     /**
-     * 計算獲利金額
+     * 計算獲利
      */
-    public function getProfitAttribute()
+    public function getProfitAttribute(): float
     {
         return $this->final_capital - $this->initial_capital;
     }
 
     /**
-     * 計算獲利率百分比
+     * 計算報酬率
      */
-    public function getReturnPercentAttribute()
+    public function getReturnPercentAttribute(): float
     {
-        if ($this->initial_capital > 0) {
-            return ($this->profit / $this->initial_capital) * 100;
-        }
-        return 0;
+        return $this->total_return;
     }
 
     /**
-     * 計算賺賠比
+     * 計算盈虧比
      */
-    public function getProfitLossRatioAttribute()
+    public function getProfitLossRatioAttribute(): ?float
     {
         if ($this->avg_loss != 0) {
-            return abs($this->avg_profit / $this->avg_loss);
+            return abs($this->avg_win / $this->avg_loss);
         }
         return null;
     }
 
     /**
-     * 取得績效評分
+     * 計算績效評分
      */
-    public function getPerformanceScoreAttribute()
+    public function getPerformanceScoreAttribute(): float
     {
         $score = 0;
         
-        // 總報酬率權重 40%
-        $score += $this->total_return * 40;
+        // 報酬率權重: 40%
+        $score += ($this->total_return / 100) * 40;
         
-        // 夏普比率權重 30%
+        // 夏普比率權重: 30%
         if ($this->sharpe_ratio) {
-            $score += $this->sharpe_ratio * 30;
+            $score += min($this->sharpe_ratio, 3) / 3 * 30;
         }
         
-        // 勝率權重 20%
+        // 勝率權重: 20%
         if ($this->win_rate) {
-            $score += $this->win_rate * 20;
+            $score += ($this->win_rate / 100) * 20;
         }
         
-        // 最大回撤權重 10% (負向指標)
+        // 回撤懲罰: 10%
         if ($this->max_drawdown) {
-            $score -= abs($this->max_drawdown) * 10;
+            $score += (1 - min(abs($this->max_drawdown) / 50, 1)) * 10;
         }
         
         return round($score, 2);

@@ -20,6 +20,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=stock_analysis
+      - DB_USERNAME=laravel
+      - DB_PASSWORD=secret
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
   # Nginx Service
   nginx:
@@ -42,27 +50,23 @@ services:
     container_name: stock-analysis-mysql
     restart: unless-stopped
     ports:
-      - "3307:3306"  # 改用 3307 避免與本機 MySQL 衝突
+      - "3307:3306"
     environment:
-      # Root 用戶密碼
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      # 建立的資料庫
       MYSQL_DATABASE: ${DB_DATABASE:-stock_analysis}
-      # 建立的普通用戶 (不能是 root!)
       MYSQL_USER: ${DB_USERNAME:-laravel}
       MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
     volumes:
-      - dbdata:/var/lib/mysql
-      - ./docker/mysql/my.cnf:/etc/mysql/my.cnf
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
     networks:
       - stock-analysis-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${DB_USERNAME:-laravel}", "-p${DB_PASSWORD:-secret}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    command: --default-authentication-plugin=mysql_native_password
 
   # Redis
   redis:
@@ -71,58 +75,11 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - stock-analysis-network
     command: redis-server --appendonly yes
-    volumes:
-      - redisdata:/data
-    networks:
-      - stock-analysis-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-
-  # Node.js for Vue
-  node:
-    image: node:18-alpine
-    container_name: stock-analysis-node
-    working_dir: /var/www
-    volumes:
-      - ./:/var/www
-    ports:
-      - "5173:5173"  # Vite dev server
-    networks:
-      - stock-analysis-network
-    command: tail -f /dev/null
-
-  # Queue Worker
-  queue:
-    image: stock-analysis-app
-    container_name: stock-analysis-queue
-    restart: unless-stopped
-    working_dir: /var/www
-    command: php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
-    volumes:
-      - ./:/var/www
-    networks:
-      - stock-analysis-network
-    depends_on:
-      - app
-      - redis
-
-  # Scheduler
-  scheduler:
-    image: stock-analysis-app
-    container_name: stock-analysis-scheduler
-    restart: unless-stopped
-    working_dir: /var/www
-    command: /bin/sh -c "while true; do php artisan schedule:run --verbose --no-interaction & sleep 60; done"
-    volumes:
-      - ./:/var/www
-    networks:
-      - stock-analysis-network
-    depends_on:
-      - app
 
   # phpMyAdmin
   phpmyadmin:
@@ -134,22 +91,38 @@ services:
     environment:
       PMA_HOST: db
       PMA_PORT: 3306
-      PMA_USER: ${DB_USERNAME:-laravel}
-      PMA_PASSWORD: ${DB_PASSWORD:-secret}
-      # 允許使用 root 登入
-      PMA_ARBITRARY: 1
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      UPLOAD_LIMIT: 50M
     networks:
       - stock-analysis-network
     depends_on:
-      db:
-        condition: service_healthy
+      - db
+
+  # Queue Worker
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stock-analysis-queue
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan queue:work redis --sleep=3 --tries=3 --daemon
+    volumes:
+      - ./:/var/www
+    networks:
+      - stock-analysis-network
+    depends_on:
+      - app
+      - redis
+      - db
 
 networks:
   stock-analysis-network:
     driver: bridge
 
 volumes:
-  dbdata:
+  mysql_data:
     driver: local
-  redisdata:
+  redis_data:
     driver: local
