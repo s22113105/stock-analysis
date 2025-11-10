@@ -2,7 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\DB;  
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 
 use App\Http\Controllers\Api\BlackScholesController;
@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\RealtimeController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\TradingController;
 
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -27,7 +28,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
-    
+
     // Dashboard
     Route::prefix('dashboard')->group(function () {
         Route::get('/stats', [DashboardController::class, 'stats']);
@@ -35,7 +36,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/performance', [DashboardController::class, 'performance']);
         Route::get('/alerts', [DashboardController::class, 'alerts']);
     });
-    
+
     // Stocks
     Route::prefix('stocks')->group(function () {
         Route::get('/', [StockController::class, 'index']);
@@ -46,7 +47,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/search', [StockController::class, 'search']);
         Route::post('/import', [StockController::class, 'import']);
     });
-    
+
     // Options
     Route::prefix('options')->group(function () {
         Route::get('/', [OptionController::class, 'index']);
@@ -56,7 +57,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/expiring', [OptionController::class, 'expiring']);
         Route::post('/filter', [OptionController::class, 'filter']);
     });
-    
+
     // Black-Scholes
     Route::prefix('black-scholes')->group(function () {
         Route::post('/calculate', [BlackScholesController::class, 'calculate']);
@@ -65,7 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/volatility-smile', [BlackScholesController::class, 'volatilitySmile']);
         Route::post('/batch-greeks', [BlackScholesController::class, 'batchGreeks']);
     });
-    
+
     // Volatility
     Route::prefix('volatility')->group(function () {
         Route::get('/historical/{stockId}', [VolatilityController::class, 'historical']);
@@ -76,18 +77,23 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/calculate', [VolatilityController::class, 'calculate']);
         Route::get('/garch/{stockId}', [VolatilityController::class, 'garch']);
     });
-    
-    // Predictions
+
+    // 預測相關路由
     Route::prefix('predictions')->group(function () {
         Route::get('/', [PredictionController::class, 'index']);
         Route::post('/run', [PredictionController::class, 'run']);
         Route::get('/{id}', [PredictionController::class, 'show']);
         Route::delete('/{id}', [PredictionController::class, 'destroy']);
+
+        // 特定模型路由
         Route::post('/lstm', [PredictionController::class, 'lstm']);
         Route::post('/arima', [PredictionController::class, 'arima']);
+        Route::post('/garch', [PredictionController::class, 'garch']);
         Route::post('/monte-carlo', [PredictionController::class, 'monteCarlo']);
+        Route::post('/compare', [PredictionController::class, 'compare']);
     });
-    
+
+
     // Backtest
     Route::prefix('backtest')->group(function () {
         Route::get('/', [BacktestController::class, 'index']);
@@ -97,7 +103,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/strategies', [BacktestController::class, 'strategies']);
         Route::post('/compare', [BacktestController::class, 'compare']);
     });
-    
+
     // Real-time data
     Route::prefix('realtime')->group(function () {
         Route::get('/quotes', [RealtimeController::class, 'quotes']);
@@ -106,7 +112,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/subscribe', [RealtimeController::class, 'subscribe']);
         Route::post('/unsubscribe', [RealtimeController::class, 'unsubscribe']);
     });
-    
+
     // Reports
     Route::prefix('reports')->group(function () {
         Route::get('/daily', [ReportController::class, 'daily']);
@@ -116,7 +122,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/generate', [ReportController::class, 'generate']);
         Route::get('/export/{type}', [ReportController::class, 'export']);
     });
-    
+
     // Trading
     Route::prefix('trading')->group(function () {
         Route::get('/positions', [TradingController::class, 'positions']);
@@ -126,7 +132,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/order/{id}', [TradingController::class, 'cancelOrder']);
         Route::post('/close/{positionId}', [TradingController::class, 'closePosition']);
     });
-    
+
     // Alerts
     Route::prefix('alerts')->group(function () {
         Route::get('/', [AlertController::class, 'index']);
@@ -135,7 +141,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/{id}', [AlertController::class, 'destroy']);
         Route::post('/{id}/toggle', [AlertController::class, 'toggle']);
     });
-    
+
     // Settings
     Route::prefix('settings')->group(function () {
         Route::get('/', [SettingsController::class, 'index']);
@@ -154,14 +160,14 @@ Route::prefix('public')->group(function () {
         $hour = $now->hour;
         $minute = $now->minute;
         $dayOfWeek = $now->dayOfWeek;
-        
+
         $isWeekend = in_array($dayOfWeek, [0, 6]);
         $isTrading = !$isWeekend && (
             ($hour === 9 && $minute >= 0) ||
             ($hour >= 10 && $hour < 13) ||
             ($hour === 13 && $minute <= 30)
         );
-        
+
         return response()->json([
             'is_open' => $isTrading,
             'current_time' => $now->toIso8601String(),
@@ -169,7 +175,7 @@ Route::prefix('public')->group(function () {
             'next_close' => $isTrading ? $now->setTime(13, 30) : null,
         ]);
     });
-    
+
     // Health check
     Route::get('/health', function () {
         return response()->json([
