@@ -2,6 +2,9 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\DB;  
+use Illuminate\Support\Facades\Redis;
+
 use App\Http\Controllers\Api\BlackScholesController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\OptionController;
@@ -9,6 +12,9 @@ use App\Http\Controllers\Api\VolatilityController;
 use App\Http\Controllers\Api\PredictionController;
 use App\Http\Controllers\Api\BacktestController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\RealtimeController;
+use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\TradingController;
 
 /*
 |--------------------------------------------------------------------------
