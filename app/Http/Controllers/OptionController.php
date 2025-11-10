@@ -116,53 +116,64 @@ class OptionController extends Controller
         }
 
         try {
-            $expiryDate = $request->input('expiry_date');
-            $optionType = $request->input('option_type', 'both');
-
             $query = Option::where('underlying', $stock->symbol)
-                ->where('is_active', true)
-                ->with('latestPrice');
+                ->where('is_active', true);
 
-            if ($expiryDate) {
-                $query->where('expiry_date', $expiryDate);
+            // 到期日篩選
+            if ($request->has('expiry_date')) {
+                $query->where('expiry_date', $request->input('expiry_date'));
             } else {
-                // 取得最近的到期日
-                $query->where('expiry_date', '>=', now()->format('Y-m-d'))
-                    ->orderBy('expiry_date')
-                    ->limit(50);
+                // 預設取得最近的到期日
+                $nearestExpiry = Option::where('underlying', $stock->symbol)
+                    ->where('is_active', true)
+                    ->where('expiry_date', '>=', now()->format('Y-m-d'))
+                    ->min('expiry_date');
+                
+                if ($nearestExpiry) {
+                    $query->where('expiry_date', $nearestExpiry);
+                }
             }
 
+            // 選擇權類型篩選
+            $optionType = $request->input('option_type', 'both');
             if ($optionType !== 'both') {
                 $query->where('option_type', $optionType);
             }
 
-            $options = $query->orderBy('strike_price')->get();
+            $options = $query->with('latestPrice')
+                ->orderBy('strike_price')
+                ->get();
 
             // 組織選擇權鏈資料
-            $chain = [];
-            $strikeGroups = $options->groupBy('strike_price');
+            $chainData = [];
+            $strikes = $options->pluck('strike_price')->unique()->sort()->values();
 
-            foreach ($strikeGroups as $strike => $strikeOptions) {
-                $callOption = $strikeOptions->where('option_type', 'call')->first();
-                $putOption = $strikeOptions->where('option_type', 'put')->first();
+            foreach ($strikes as $strike) {
+                $callOption = $options->where('strike_price', $strike)
+                    ->where('option_type', 'call')
+                    ->first();
+                
+                $putOption = $options->where('strike_price', $strike)
+                    ->where('option_type', 'put')
+                    ->first();
 
-                $chain[] = [
+                $chainData[] = [
                     'strike_price' => $strike,
                     'call' => $callOption ? [
                         'id' => $callOption->id,
                         'option_code' => $callOption->option_code,
-                        'last_price' => $callOption->latestPrice->close ?? null,
-                        'volume' => $callOption->latestPrice->volume ?? 0,
-                        'open_interest' => $callOption->latestPrice->open_interest ?? 0,
-                        'implied_volatility' => $callOption->latestPrice->implied_volatility ?? null,
+                        'price' => $callOption->latestPrice?->close,
+                        'volume' => $callOption->latestPrice?->volume,
+                        'open_interest' => $callOption->latestPrice?->open_interest,
+                        'implied_volatility' => $callOption->latestPrice?->implied_volatility,
                     ] : null,
                     'put' => $putOption ? [
                         'id' => $putOption->id,
                         'option_code' => $putOption->option_code,
-                        'last_price' => $putOption->latestPrice->close ?? null,
-                        'volume' => $putOption->latestPrice->volume ?? 0,
-                        'open_interest' => $putOption->latestPrice->open_interest ?? 0,
-                        'implied_volatility' => $putOption->latestPrice->implied_volatility ?? null,
+                        'price' => $putOption->latestPrice?->close,
+                        'volume' => $putOption->latestPrice?->volume,
+                        'open_interest' => $putOption->latestPrice?->open_interest,
+                        'implied_volatility' => $putOption->latestPrice?->implied_volatility,
                     ] : null,
                 ];
             }
@@ -174,41 +185,37 @@ class OptionController extends Controller
                         'id' => $stock->id,
                         'symbol' => $stock->symbol,
                         'name' => $stock->name,
-                        'current_price' => $stock->latestPrice->close ?? null,
+                        'current_price' => $stock->latestPrice?->close,
                     ],
-                    'option_chain' => $chain,
-                    'expiry_date' => $expiryDate,
-                    'total_strikes' => count($chain),
+                    'chain' => $chainData,
+                    'expiry_date' => $options->first()?->expiry_date,
                 ]
             ]);
 
         } catch (\Exception $e) {
-            Log::error('選擇權鏈查詢錯誤', [
+            Log::error('取得選擇權鏈失敗', [
                 'stock_id' => $stockId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'error' => $e->getMessage()
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => '查詢失敗: ' . $e->getMessage()
+                'message' => '取得資料失敗: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * 取得選擇權歷史價格
+     * 取得選擇權價格歷史
      * 
      * GET /api/options/{id}/prices
      */
     public function prices(Request $request, int $id): JsonResponse
     {
-        $option = Option::findOrFail($id);
-
         $validator = Validator::make($request->all(), [
+            'period' => 'nullable|in:1d,1w,1m,3m,6m,all',
             'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date|after_or_equal:start_date',
-            'limit' => 'nullable|integer|min:1|max:365',
+            'end_date' => 'nullable|date',
         ]);
 
         if ($validator->fails()) {
@@ -219,66 +226,133 @@ class OptionController extends Controller
             ], 422);
         }
 
-        $query = OptionPrice::where('option_id', $id);
+        try {
+            $option = Option::findOrFail($id);
+            
+            $query = OptionPrice::where('option_id', $id);
 
-        if ($request->has('start_date')) {
-            $query->where('trade_date', '>=', $request->input('start_date'));
+            // 根據 period 參數設定日期範圍
+            if ($request->has('period') && $request->input('period') !== 'all') {
+                $period = $request->input('period');
+                $startDate = $this->getDateRange($period);
+                $query->where('trade_date', '>=', $startDate->format('Y-m-d'));
+            }
+
+            // 自訂日期範圍
+            if ($request->has('start_date')) {
+                $query->where('trade_date', '>=', $request->input('start_date'));
+            }
+
+            if ($request->has('end_date')) {
+                $query->where('trade_date', '<=', $request->input('end_date'));
+            }
+
+            $prices = $query->orderBy('trade_date', 'asc')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'option' => [
+                        'id' => $option->id,
+                        'option_code' => $option->option_code,
+                        'underlying' => $option->underlying,
+                        'strike_price' => $option->strike_price,
+                        'expiry_date' => $option->expiry_date,
+                        'option_type' => $option->option_type,
+                    ],
+                    'prices' => $prices,
+                    'count' => $prices->count(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('取得選擇權價格歷史失敗', [
+                'option_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '取得資料失敗: ' . $e->getMessage()
+            ], 500);
         }
-
-        if ($request->has('end_date')) {
-            $query->where('trade_date', '<=', $request->input('end_date'));
-        }
-
-        $limit = $request->input('limit', 90);
-        $prices = $query->orderBy('trade_date', 'desc')
-            ->limit($limit)
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'option' => [
-                    'id' => $option->id,
-                    'option_code' => $option->option_code,
-                    'option_type' => $option->option_type,
-                    'strike_price' => $option->strike_price,
-                    'expiry_date' => $option->expiry_date,
-                ],
-                'prices' => $prices,
-                'total' => $prices->count(),
-            ]
-        ]);
     }
 
     /**
-     * 取得即將到期的選擇權
+     * 即將到期的選擇權
      * 
      * GET /api/options/expiring
      */
     public function expiring(Request $request): JsonResponse
     {
-        $days = $request->input('days', 7);
-        $expiryDate = now()->addDays($days)->format('Y-m-d');
-
-        $options = Option::where('expiry_date', '<=', $expiryDate)
-            ->where('expiry_date', '>=', now()->format('Y-m-d'))
-            ->where('is_active', true)
-            ->with(['latestPrice', 'stock'])
-            ->orderBy('expiry_date')
-            ->get();
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'options' => $options,
-                'expiry_within_days' => $days,
-                'total' => $options->count(),
-            ]
+        $validator = Validator::make($request->all(), [
+            'days' => 'nullable|integer|min:1|max:90',
+            'underlying' => 'nullable|string',
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => '參數驗證失敗',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $days = $request->input('days', 7);
+            $expiryDate = now()->addDays($days)->format('Y-m-d');
+
+            $query = Option::where('is_active', true)
+                ->where('expiry_date', '<=', $expiryDate)
+                ->where('expiry_date', '>=', now()->format('Y-m-d'));
+
+            // 標的篩選
+            if ($request->has('underlying')) {
+                $query->where('underlying', $request->input('underlying'));
+            }
+
+            $options = $query->with(['latestPrice', 'stock'])
+                ->orderBy('expiry_date', 'asc')
+                ->orderBy('strike_price', 'asc')
+                ->get();
+
+            // 按到期日分組
+            $grouped = $options->groupBy('expiry_date')->map(function ($group, $date) {
+                return [
+                    'expiry_date' => $date,
+                    'days_until_expiry' => Carbon::parse($date)->diffInDays(now()),
+                    'options' => $group->map(function ($option) {
+                        return [
+                            'id' => $option->id,
+                            'option_code' => $option->option_code,
+                            'underlying' => $option->underlying,
+                            'strike_price' => $option->strike_price,
+                            'option_type' => $option->option_type,
+                            'latest_price' => $option->latestPrice,
+                        ];
+                    }),
+                    'count' => $group->count(),
+                ];
+            })->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $grouped,
+                'total_count' => $options->count(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('取得即將到期選擇權失敗', [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '取得資料失敗: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
-     * 篩選選擇權
+     * 進階篩選選擇權
      * 
      * POST /api/options/filter
      */
@@ -287,12 +361,18 @@ class OptionController extends Controller
         $validator = Validator::make($request->all(), [
             'underlying' => 'nullable|string',
             'option_type' => 'nullable|in:call,put',
-            'min_strike' => 'nullable|numeric',
-            'max_strike' => 'nullable|numeric',
-            'min_volume' => 'nullable|integer',
-            'min_open_interest' => 'nullable|integer',
-            'expiry_start' => 'nullable|date',
-            'expiry_end' => 'nullable|date',
+            'expiry_date_from' => 'nullable|date',
+            'expiry_date_to' => 'nullable|date',
+            'strike_price_min' => 'nullable|numeric|min:0',
+            'strike_price_max' => 'nullable|numeric',
+            'moneyness' => 'nullable|in:ITM,ATM,OTM',
+            'volume_min' => 'nullable|integer|min:0',
+            'open_interest_min' => 'nullable|integer|min:0',
+            'implied_volatility_min' => 'nullable|numeric|min:0',
+            'implied_volatility_max' => 'nullable|numeric',
+            'sort_by' => 'nullable|in:expiry_date,strike_price,volume,open_interest,implied_volatility',
+            'sort_order' => 'nullable|in:asc,desc',
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
         if ($validator->fails()) {
@@ -306,54 +386,145 @@ class OptionController extends Controller
         try {
             $query = Option::query()->where('is_active', true);
 
+            // 標的篩選
             if ($request->has('underlying')) {
                 $query->where('underlying', $request->input('underlying'));
             }
 
+            // 選擇權類型篩選
             if ($request->has('option_type')) {
                 $query->where('option_type', $request->input('option_type'));
             }
 
-            if ($request->has('min_strike')) {
-                $query->where('strike_price', '>=', $request->input('min_strike'));
+            // 到期日範圍篩選
+            if ($request->has('expiry_date_from')) {
+                $query->where('expiry_date', '>=', $request->input('expiry_date_from'));
             }
 
-            if ($request->has('max_strike')) {
-                $query->where('strike_price', '<=', $request->input('max_strike'));
+            if ($request->has('expiry_date_to')) {
+                $query->where('expiry_date', '<=', $request->input('expiry_date_to'));
             }
 
-            if ($request->has('expiry_start')) {
-                $query->where('expiry_date', '>=', $request->input('expiry_start'));
+            // 履約價範圍篩選
+            if ($request->has('strike_price_min')) {
+                $query->where('strike_price', '>=', $request->input('strike_price_min'));
             }
 
-            if ($request->has('expiry_end')) {
-                $query->where('expiry_date', '<=', $request->input('expiry_end'));
+            if ($request->has('strike_price_max')) {
+                $query->where('strike_price', '<=', $request->input('strike_price_max'));
             }
 
-            // 加入最新價格的篩選條件
-            if ($request->has('min_volume') || $request->has('min_open_interest')) {
+            // 價性篩選 (需要標的價格)
+            if ($request->has('moneyness') && $request->has('underlying')) {
+                $moneyness = $request->input('moneyness');
+                $underlying = $request->input('underlying');
+                
+                // 取得標的最新價格
+                $stock = Stock::where('symbol', $underlying)->first();
+                if ($stock && $stock->latestPrice) {
+                    $spotPrice = $stock->latestPrice->close;
+                    
+                    switch ($moneyness) {
+                        case 'ITM': // In the Money
+                            $query->where(function ($q) use ($spotPrice) {
+                                $q->where(function ($q2) use ($spotPrice) {
+                                    // Call ITM: 履約價 < 現價
+                                    $q2->where('option_type', 'call')
+                                       ->where('strike_price', '<', $spotPrice);
+                                })->orWhere(function ($q2) use ($spotPrice) {
+                                    // Put ITM: 履約價 > 現價
+                                    $q2->where('option_type', 'put')
+                                       ->where('strike_price', '>', $spotPrice);
+                                });
+                            });
+                            break;
+                        
+                        case 'ATM': // At the Money (現價 ± 5%)
+                            $range = $spotPrice * 0.05;
+                            $query->whereBetween('strike_price', [
+                                $spotPrice - $range,
+                                $spotPrice + $range
+                            ]);
+                            break;
+                        
+                        case 'OTM': // Out of the Money
+                            $query->where(function ($q) use ($spotPrice) {
+                                $q->where(function ($q2) use ($spotPrice) {
+                                    // Call OTM: 履約價 > 現價
+                                    $q2->where('option_type', 'call')
+                                       ->where('strike_price', '>', $spotPrice);
+                                })->orWhere(function ($q2) use ($spotPrice) {
+                                    // Put OTM: 履約價 < 現價
+                                    $q2->where('option_type', 'put')
+                                       ->where('strike_price', '<', $spotPrice);
+                                });
+                            });
+                            break;
+                    }
+                }
+            }
+
+            // 關聯最新價格並篩選
+            $query->with('latestPrice');
+
+            // 成交量篩選
+            if ($request->has('volume_min')) {
                 $query->whereHas('latestPrice', function ($q) use ($request) {
-                    if ($request->has('min_volume')) {
-                        $q->where('volume', '>=', $request->input('min_volume'));
-                    }
-                    if ($request->has('min_open_interest')) {
-                        $q->where('open_interest', '>=', $request->input('min_open_interest'));
-                    }
+                    $q->where('volume', '>=', $request->input('volume_min'));
                 });
             }
 
-            $options = $query->with(['latestPrice', 'stock'])
-                ->orderBy('expiry_date')
-                ->orderBy('strike_price')
-                ->paginate(50);
+            // 未平倉量篩選
+            if ($request->has('open_interest_min')) {
+                $query->whereHas('latestPrice', function ($q) use ($request) {
+                    $q->where('open_interest', '>=', $request->input('open_interest_min'));
+                });
+            }
+
+            // 隱含波動率範圍篩選
+            if ($request->has('implied_volatility_min')) {
+                $query->whereHas('latestPrice', function ($q) use ($request) {
+                    $q->where('implied_volatility', '>=', $request->input('implied_volatility_min'));
+                });
+            }
+
+            if ($request->has('implied_volatility_max')) {
+                $query->whereHas('latestPrice', function ($q) use ($request) {
+                    $q->where('implied_volatility', '<=', $request->input('implied_volatility_max'));
+                });
+            }
+
+            // 排序
+            $sortBy = $request->input('sort_by', 'expiry_date');
+            $sortOrder = $request->input('sort_order', 'asc');
+
+            if (in_array($sortBy, ['volume', 'open_interest', 'implied_volatility'])) {
+                // 如果排序欄位在 latestPrice 關聯中
+                $query->leftJoin('option_prices as latest', function ($join) {
+                    $join->on('options.id', '=', 'latest.option_id')
+                         ->whereRaw('latest.trade_date = (SELECT MAX(trade_date) FROM option_prices WHERE option_id = options.id)');
+                })->orderBy('latest.' . $sortBy, $sortOrder);
+            } else {
+                $query->orderBy($sortBy, $sortOrder);
+            }
+
+            // 分頁
+            $perPage = $request->input('per_page', 20);
+            $options = $query->select('options.*')->paginate($perPage);
 
             return response()->json([
                 'success' => true,
-                'data' => $options
+                'data' => $options,
+                'filters_applied' => array_filter($request->only([
+                    'underlying', 'option_type', 'expiry_date_from', 'expiry_date_to',
+                    'strike_price_min', 'strike_price_max', 'moneyness',
+                    'volume_min', 'open_interest_min',
+                    'implied_volatility_min', 'implied_volatility_max'
+                ])),
             ]);
-
         } catch (\Exception $e) {
-            Log::error('選擇權篩選錯誤', [
+            Log::error('篩選選擇權失敗', [
+                'filters' => $request->all(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -363,5 +534,20 @@ class OptionController extends Controller
                 'message' => '篩選失敗: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * 計算時間範圍
+     */
+    private function getDateRange($period)
+    {
+        return match ($period) {
+            '1d' => now()->subDay(),
+            '1w' => now()->subWeek(),
+            '1m' => now()->subMonth(),
+            '3m' => now()->subMonths(3),
+            '6m' => now()->subMonths(6),
+            default => now()->subMonth(),
+        };
     }
 }
