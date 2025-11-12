@@ -1,5 +1,5 @@
 <?php
-
+// 這個檔案將被新版本取代
 namespace App\Services;
 
 use App\Models\Stock;
