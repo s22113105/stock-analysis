@@ -1,18 +1,26 @@
 <template>
   <v-app>
-    <!-- Navigation Drawer -->
+    <!-- 側邊欄 -->
     <v-navigation-drawer
       v-model="drawer"
-      app
+      :rail="rail"
       permanent
-      :rail="miniVariant"
-      @click="miniVariant = false"
+      @click="rail = false"
     >
       <v-list-item
         prepend-avatar="/logo.png"
-        :title="miniVariant ? '' : '選擇權交易系統'"
-        :subtitle="miniVariant ? '' : 'Options Trading System'"
-      />
+        title="Stock_Analysis"
+        subtitle="台股選擇權交易系統"
+        nav
+      >
+        <template v-slot:append>
+          <v-btn
+            variant="text"
+            icon="mdi-chevron-left"
+            @click.stop="rail = !rail"
+          ></v-btn>
+        </template>
+      </v-list-item>
 
       <v-divider></v-divider>
 
@@ -20,44 +28,51 @@
         <v-list-item
           v-for="item in menuItems"
           :key="item.title"
-          :to="item.to"
           :prepend-icon="item.icon"
           :title="item.title"
-        />
+          :to="item.to"
+          :value="item.title"
+          color="primary"
+        ></v-list-item>
       </v-list>
     </v-navigation-drawer>
 
-    <!-- App Bar -->
-    <v-app-bar app elevation="1">
-      <v-app-bar-nav-icon @click="miniVariant = !miniVariant"></v-app-bar-nav-icon>
+    <!-- 頂部導航欄 -->
+    <v-app-bar>
+      <v-app-bar-nav-icon @click="drawer = !drawer" v-if="mobile"></v-app-bar-nav-icon>
 
-      <v-toolbar-title>{{ pageTitle }}</v-toolbar-title>
+      <v-toolbar-title>
+        {{ currentPageTitle }}
+      </v-toolbar-title>
 
       <v-spacer></v-spacer>
 
-      <!-- Market Status -->
-      <v-chip
-        :color="marketStatus.color"
-        variant="flat"
-        class="mr-2"
-      >
+      <!-- 市場狀態指示 -->
+      <v-chip class="mr-2" :color="marketStatus.color">
         <v-icon start>{{ marketStatus.icon }}</v-icon>
         {{ marketStatus.text }}
       </v-chip>
 
-      <!-- Notifications -->
+      <!-- 時間顯示 -->
+      <v-chip class="mr-2">
+        <v-icon start>mdi-clock</v-icon>
+        {{ currentTime }}
+      </v-chip>
+
+      <!-- 主題切換 -->
+      <v-btn icon @click="toggleTheme">
+        <v-icon>{{ theme.global.current.value.dark ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
+      </v-btn>
+
+      <!-- 通知 -->
       <v-btn icon>
-        <v-badge :content="notifications" :value="notifications" color="error" overlap>
+        <v-badge :content="notifications" color="error" v-if="notifications > 0">
           <v-icon>mdi-bell</v-icon>
         </v-badge>
+        <v-icon v-else>mdi-bell-outline</v-icon>
       </v-btn>
 
-      <!-- Theme Toggle -->
-      <v-btn icon @click="toggleTheme">
-        <v-icon>{{ theme === 'light' ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
-      </v-btn>
-
-      <!-- User Menu -->
+      <!-- 使用者選單 -->
       <v-menu>
         <template v-slot:activator="{ props }">
           <v-btn icon v-bind="props">
@@ -81,18 +96,18 @@
       </v-menu>
     </v-app-bar>
 
-    <!-- Main Content -->
+    <!-- 主要內容區 -->
     <v-main>
       <v-container fluid>
         <router-view></router-view>
       </v-container>
     </v-main>
 
-    <!-- Footer -->
+    <!-- 頁尾 -->
     <v-footer app>
       <v-row justify="center" no-gutters>
         <v-col class="text-center" cols="12">
-          {{ new Date().getFullYear() }} — <strong>Options Trading System</strong>
+          {{ new Date().getFullYear() }} — <strong>Stock_Analysis System</strong>
         </v-col>
       </v-row>
     </v-footer>
@@ -100,9 +115,10 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
+import { useDisplay } from 'vuetify'
 
 export default {
   name: 'App',
@@ -110,16 +126,19 @@ export default {
     const router = useRouter()
     const route = useRoute()
     const theme = useTheme()
-    
+    const { mobile } = useDisplay()
+
     const drawer = ref(true)
-    const miniVariant = ref(false)
-    const notifications = ref(3)
-    
+    const rail = ref(false)
+    const notifications = ref(0)
+    const currentTime = ref('')
+    let timeInterval = null
+
     const menuItems = ref([
       {
         title: '儀表板',
         icon: 'mdi-view-dashboard',
-        to: '/'
+        to: '/dashboard'
       },
       {
         title: '股票報價',
@@ -167,19 +186,21 @@ export default {
         to: '/settings'
       }
     ])
-    
-    const pageTitle = computed(() => {
+
+    // 計算當前頁面標題
+    const currentPageTitle = computed(() => {
       const currentRoute = menuItems.value.find(item => item.to === route.path)
-      return currentRoute ? currentRoute.title : '選擇權交易系統'
+      return currentRoute ? currentRoute.title : 'Stock_Analysis'
     })
 
+    // 市場狀態
     const marketStatus = computed(() => {
       const now = new Date()
       const hour = now.getHours()
       const minute = now.getMinutes()
       const day = now.getDay()
 
-      // 週末休市
+      // 週末
       if (day === 0 || day === 6) {
         return {
           text: '休市',
@@ -188,69 +209,97 @@ export default {
         }
       }
 
-      // 交易時間 9:00 - 13:30
+      // 交易時間: 9:00 - 13:30
       if (hour === 9 && minute >= 0 ||
           hour >= 10 && hour < 13 ||
           hour === 13 && minute <= 30) {
         return {
           text: '開盤中',
           color: 'success',
-          icon: 'mdi-check-circle'
+          icon: 'mdi-chart-line-variant'
         }
       }
 
-      // 盤前
-      if (hour >= 8 && hour < 9) {
+      // 盤後
+      if (hour === 13 && minute > 30 || hour === 14) {
         return {
-          text: '盤前',
+          text: '盤後交易',
           color: 'warning',
           icon: 'mdi-clock-alert'
         }
       }
 
-      // 盤後
       return {
-        text: '收盤',
-        color: 'error',
+        text: '已收盤',
+        color: 'grey',
         icon: 'mdi-close-circle'
       }
     })
 
+    // 更新時間
+    const updateTime = () => {
+      const now = new Date()
+      currentTime.value = now.toLocaleTimeString('zh-TW', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    }
+
+    // 切換主題
     const toggleTheme = () => {
       theme.global.name.value = theme.global.current.value.dark ? 'light' : 'dark'
     }
 
+    // 個人資料
     const profile = () => {
       router.push('/profile')
     }
 
+    // 系統設定
     const settings = () => {
       router.push('/settings')
     }
 
+    // 登出
     const logout = () => {
-      // 執行登出邏輯
-      console.log('Logging out...')
+      if (confirm('確定要登出嗎？')) {
+        // 清除 token
+        localStorage.removeItem('authToken')
+        // 導向登入頁（如果有的話）
+        // router.push('/login')
+        window.location.reload()
+      }
     }
 
+    // 生命週期
     onMounted(() => {
-      // WebSocket 連線
-      if (window.Echo) {
-        window.Echo.channel('stock-updates')
-          .listen('StockPriceUpdated', (e) => {
-            console.log('Stock price updated:', e)
-          })
+      updateTime()
+      timeInterval = setInterval(updateTime, 1000)
+
+      // 檢查認證狀態
+      // const token = localStorage.getItem('authToken')
+      // if (!token && route.path !== '/login') {
+      //   router.push('/login')
+      // }
+    })
+
+    onUnmounted(() => {
+      if (timeInterval) {
+        clearInterval(timeInterval)
       }
     })
 
     return {
       drawer,
-      miniVariant,
+      rail,
       notifications,
       menuItems,
-      pageTitle,
+      currentPageTitle,
+      currentTime,
       marketStatus,
-      theme: theme.global.name,
+      theme,
+      mobile,
       toggleTheme,
       profile,
       settings,
@@ -260,8 +309,16 @@ export default {
 }
 </script>
 
-<style scoped>
-.v-navigation-drawer {
-  padding-top: 0;
+<style>
+html {
+  overflow-y: auto !important;
+}
+
+.v-application {
+  font-family: 'Noto Sans TC', sans-serif !important;
+}
+
+[v-cloak] {
+  display: none;
 }
 </style>
