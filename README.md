@@ -1,4 +1,4 @@
-# 📈 Options Trading System - Laravel 10 + Vue 3
+# 📈 Stock_Analysis - Laravel 10 + Vue 3
 
 台股選擇權交易分析系統，結合 Black-Scholes 定價模型、波動率分析與策略回測功能。
 
@@ -71,7 +71,7 @@ docker-compose exec node npm run dev
 ## 📁 專案結構
 
 ```
-options-trading-system/
+stock-analysis/
 ├── app/
 │   ├── Models/           # Eloquent 模型
 │   ├── Http/
