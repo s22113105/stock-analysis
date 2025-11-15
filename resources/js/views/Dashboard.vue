@@ -1,99 +1,78 @@
 <template>
   <div class="dashboard">
-    <h1 class="text-h4 mb-6">Stock_Analysis 儀表板</h1>
-
-    <!-- 統計卡片 -->
+    <!-- 統計卡片區 -->
     <v-row>
-      <v-col cols="12" sm="6" md="3">
-        <v-card>
+      <v-col cols="12" md="3">
+        <v-card elevation="2">
           <v-card-text>
-            <div class="d-flex align-center">
-              <div class="flex-grow-1">
-                <div class="text-subtitle-2 text-grey">總資產價值</div>
-                <div class="text-h5 font-weight-bold">
-                  NT$ {{ formatNumber(totalValue) }}
-                </div>
-                <div class="text-caption" :class="totalValueChange >= 0 ? 'text-success' : 'text-error'">
-                  <v-icon small>{{ totalValueChange >= 0 ? 'mdi-trending-up' : 'mdi-trending-down' }}</v-icon>
-                  {{ totalValueChange >= 0 ? '+' : '' }}{{ totalValueChange }}%
-                </div>
-              </div>
-              <div>
-                <v-icon size="40" color="primary">mdi-wallet</v-icon>
-              </div>
+            <div class="text-h6 text-grey">投資組合總值</div>
+            <div class="text-h4 mt-2">
+              ${{ formatNumber(totalValue) }}
+              <v-icon :color="totalValueChange >= 0 ? 'success' : 'error'" size="small">
+                {{ totalValueChange >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}
+              </v-icon>
+              <span :class="totalValueChange >= 0 ? 'text-success' : 'text-error'" class="text-body-1">
+                {{ Math.abs(totalValueChange) }}%
+              </span>
             </div>
           </v-card-text>
         </v-card>
       </v-col>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card>
+      <v-col cols="12" md="3">
+        <v-card elevation="2">
           <v-card-text>
-            <div class="d-flex align-center">
-              <div class="flex-grow-1">
-                <div class="text-subtitle-2 text-grey">今日損益</div>
-                <div class="text-h5 font-weight-bold" :class="todayPL >= 0 ? 'text-success' : 'text-error'">
-                  {{ todayPL >= 0 ? '+' : '' }}NT$ {{ formatNumber(Math.abs(todayPL)) }}
-                </div>
-                <div class="text-caption">
-                  {{ todayPLPercent >= 0 ? '+' : '' }}{{ todayPLPercent }}%
-                </div>
-              </div>
-              <div>
-                <v-icon size="40" :color="todayPL >= 0 ? 'success' : 'error'">
-                  {{ todayPL >= 0 ? 'mdi-arrow-up-bold' : 'mdi-arrow-down-bold' }}
-                </v-icon>
-              </div>
+            <div class="text-h6 text-grey">今日損益</div>
+            <div class="text-h4 mt-2" :class="todayPL >= 0 ? 'text-success' : 'text-error'">
+              {{ todayPL >= 0 ? '+' : '' }}${{ formatNumber(Math.abs(todayPL)) }}
+              <span class="text-body-1">
+                ({{ todayPL >= 0 ? '+' : '' }}{{ todayPLPercent }}%)
+              </span>
             </div>
           </v-card-text>
         </v-card>
       </v-col>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card>
+      <v-col cols="12" md="3">
+        <v-card elevation="2">
           <v-card-text>
-            <div class="d-flex align-center">
-              <div class="flex-grow-1">
-                <div class="text-subtitle-2 text-grey">持倉數量</div>
-                <div class="text-h5 font-weight-bold">{{ openPositions }}</div>
-                <div class="text-caption">{{ pendingOrders }} 待成交</div>
-              </div>
-              <div>
-                <v-icon size="40" color="info">mdi-briefcase</v-icon>
-              </div>
+            <div class="text-h6 text-grey">持倉部位</div>
+            <div class="text-h4 mt-2">
+              {{ openPositions }}
+              <span class="text-body-1 text-grey">個部位</span>
+            </div>
+            <div class="text-caption text-grey mt-1">
+              掛單中: {{ pendingOrders }}
             </div>
           </v-card-text>
         </v-card>
       </v-col>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card>
+      <v-col cols="12" md="3">
+        <v-card elevation="2">
           <v-card-text>
-            <div class="d-flex align-center">
-              <div class="flex-grow-1">
-                <div class="text-subtitle-2 text-grey">風險指標</div>
-                <div class="text-h5 font-weight-bold">{{ riskScore }}/100</div>
-                <v-progress-linear
-                  :model-value="riskScore"
-                  :color="getRiskColor(riskScore)"
-                  height="4"
-                  class="mt-2"
-                ></v-progress-linear>
-              </div>
-              <div>
-                <v-icon size="40" :color="getRiskColor(riskScore)">mdi-shield-alert</v-icon>
-              </div>
+            <div class="text-h6 text-grey">風險評分</div>
+            <div class="text-h4 mt-2">
+              <v-chip :color="getRiskColor(riskScore)" size="large">
+                {{ riskScore }}/100
+              </v-chip>
             </div>
+            <v-progress-linear
+              :color="getRiskColor(riskScore)"
+              :model-value="riskScore"
+              height="8"
+              class="mt-2"
+            ></v-progress-linear>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
 
-    <!-- 圖表區域 -->
+    <!-- 圖表區 -->
     <v-row class="mt-4">
       <v-col cols="12" md="8">
-        <v-card>
-          <v-card-title>投資組合表現</v-card-title>
+        <v-card elevation="2">
+          <v-card-title>投資組合走勢</v-card-title>
           <v-card-text>
             <canvas ref="portfolioChart" height="300"></canvas>
           </v-card-text>
@@ -101,7 +80,7 @@
       </v-col>
 
       <v-col cols="12" md="4">
-        <v-card>
+        <v-card elevation="2">
           <v-card-title>資產配置</v-card-title>
           <v-card-text>
             <canvas ref="allocationChart" height="300"></canvas>
@@ -110,48 +89,44 @@
       </v-col>
     </v-row>
 
-    <!-- 持倉列表 -->
+    <!-- 持倉明細 -->
     <v-row class="mt-4">
       <v-col cols="12">
-        <v-card>
+        <v-card elevation="2">
           <v-card-title>
-            <span>當前持倉</span>
+            持倉明細
             <v-spacer></v-spacer>
             <v-text-field
               v-model="search"
-              append-icon="mdi-magnify"
-              label="搜尋"
+              append-inner-icon="mdi-magnify"
+              label="搜尋股票"
               single-line
               hide-details
               density="compact"
-              style="max-width: 300px"
+              style="max-width: 300px;"
             ></v-text-field>
           </v-card-title>
-
           <v-card-text>
             <v-data-table
               :headers="positionHeaders"
               :items="positions"
               :search="search"
-              :items-per-page="5"
-              class="elevation-1"
+              item-value="symbol"
+              items-per-page="10"
             >
+              <template v-slot:item.pl="{ item }">
+                <span :class="item.pl >= 0 ? 'text-success' : 'text-error'">
+                  {{ item.pl >= 0 ? '+' : '' }}${{ formatNumber(Math.abs(item.pl)) }}
+                </span>
+              </template>
               <template v-slot:item.change="{ item }">
-                <v-chip
-                  :color="item.change >= 0 ? 'success' : 'error'"
-                  small
-                >
+                <v-chip :color="item.change >= 0 ? 'success' : 'error'" size="small">
                   {{ item.change >= 0 ? '+' : '' }}{{ item.change }}%
                 </v-chip>
               </template>
-
               <template v-slot:item.actions="{ item }">
-                <v-btn icon small @click="viewDetails(item)">
-                  <v-icon small>mdi-eye</v-icon>
-                </v-btn>
-                <v-btn icon small color="error" @click="closePosition(item)">
-                  <v-icon small>mdi-close</v-icon>
-                </v-btn>
+                <v-btn icon="mdi-eye" size="small" variant="text" @click="viewDetails(item)"></v-btn>
+                <v-btn icon="mdi-close" size="small" variant="text" color="error" @click="closePosition(item)"></v-btn>
               </template>
             </v-data-table>
           </v-card-text>
@@ -159,11 +134,14 @@
       </v-col>
     </v-row>
 
-    <!-- 市場新聞 -->
+    <!-- 市場資訊與即將到期選擇權 -->
     <v-row class="mt-4">
       <v-col cols="12" md="6">
-        <v-card>
-          <v-card-title>市場新聞</v-card-title>
+        <v-card elevation="2">
+          <v-card-title>
+            <v-icon>mdi-newspaper</v-icon>
+            市場資訊
+          </v-card-title>
           <v-card-text>
             <v-list>
               <v-list-item
@@ -172,8 +150,8 @@
                 @click="openNews(news)"
               >
                 <template v-slot:prepend>
-                  <v-icon :color="news.type === 'positive' ? 'success' : news.type === 'negative' ? 'error' : 'grey'">
-                    mdi-newspaper
+                  <v-icon :color="news.sentiment === 'positive' ? 'success' : news.sentiment === 'negative' ? 'error' : 'grey'">
+                    mdi-{{ news.sentiment === 'positive' ? 'trending-up' : news.sentiment === 'negative' ? 'trending-down' : 'minus' }}
                   </v-icon>
                 </template>
                 <v-list-item-title>{{ news.title }}</v-list-item-title>
@@ -185,8 +163,11 @@
       </v-col>
 
       <v-col cols="12" md="6">
-        <v-card>
-          <v-card-title>即將到期選擇權</v-card-title>
+        <v-card elevation="2">
+          <v-card-title>
+            <v-icon>mdi-calendar-alert</v-icon>
+            即將到期選擇權
+          </v-card-title>
           <v-card-text>
             <v-list>
               <v-list-item
@@ -194,7 +175,7 @@
                 :key="option.id"
               >
                 <template v-slot:prepend>
-                  <v-chip :color="option.type === 'call' ? 'green' : 'red'" small>
+                  <v-chip :color="option.type === 'call' ? 'green' : 'red'" size="small">
                     {{ option.type.toUpperCase() }}
                   </v-chip>
                 </template>
@@ -238,95 +219,43 @@ export default {
 
     // 表格標題
     const positionHeaders = ref([
-      { text: '股票代碼', value: 'symbol' },
-      { text: '名稱', value: 'name' },
-      { text: '持倉數量', value: 'quantity' },
-      { text: '成本價', value: 'cost' },
-      { text: '現價', value: 'current' },
-      { text: '損益', value: 'pl' },
-      { text: '漲跌幅', value: 'change' },
-      { text: '操作', value: 'actions', sortable: false }
+      { title: '股票代碼', key: 'symbol' },
+      { title: '名稱', key: 'name' },
+      { title: '持倉數量', key: 'quantity' },
+      { title: '成本價', key: 'cost' },
+      { title: '現價', key: 'current' },
+      { title: '損益', key: 'pl' },
+      { title: '漲跌幅', key: 'change' },
+      { title: '操作', key: 'actions', sortable: false }
     ])
 
     // 模擬資料
     const positions = ref([
-      {
-        symbol: '2330',
-        name: '台積電',
-        quantity: 1000,
-        cost: 580,
-        current: 595,
-        pl: 15000,
-        change: 2.59
-      },
-      {
-        symbol: '2317',
-        name: '鴻海',
-        quantity: 2000,
-        cost: 105,
-        current: 103,
-        pl: -4000,
-        change: -1.90
-      },
-      {
-        symbol: '2454',
-        name: '聯發科',
-        quantity: 500,
-        cost: 850,
-        current: 880,
-        pl: 15000,
-        change: 3.53
-      }
+      { symbol: '2330', name: '台積電', quantity: 1000, cost: 580, current: 595, pl: 15000, change: 2.59 },
+      { symbol: '2317', name: '鴻海', quantity: 2000, cost: 105, current: 108, pl: 6000, change: 2.86 },
+      { symbol: '2454', name: '聯發科', quantity: 500, cost: 850, current: 830, pl: -10000, change: -2.35 },
+      { symbol: '2308', name: '台達電', quantity: 800, cost: 320, current: 335, pl: 12000, change: 4.69 }
     ])
 
     const marketNews = ref([
-      {
-        id: 1,
-        title: 'Fed 維持利率不變，市場反應正面',
-        time: '10 分鐘前',
-        type: 'positive'
-      },
-      {
-        id: 2,
-        title: '台積電10月營收創新高',
-        time: '1 小時前',
-        type: 'positive'
-      },
-      {
-        id: 3,
-        title: '外資連續賣超台股',
-        time: '2 小時前',
-        type: 'negative'
-      }
+      { id: 1, title: '台積電公布Q3財報優於預期', time: '2小時前', sentiment: 'positive' },
+      { id: 2, title: '聯準會維持利率不變', time: '5小時前', sentiment: 'neutral' },
+      { id: 3, title: '台股大盤突破萬八關卡', time: '1天前', sentiment: 'positive' }
     ])
 
     const expiringOptions = ref([
-      {
-        id: 1,
-        symbol: 'TXO',
-        strike: 18000,
-        type: 'call',
-        expiry: '2025-11-15',
-        daysLeft: 3
-      },
-      {
-        id: 2,
-        symbol: 'TXO',
-        strike: 17500,
-        type: 'put',
-        expiry: '2025-11-15',
-        daysLeft: 3
-      }
+      { id: 1, symbol: '2330', type: 'call', strike: 600, expiry: '2025-11-20', daysLeft: 5 },
+      { id: 2, symbol: '2317', type: 'put', strike: 100, expiry: '2025-11-27', daysLeft: 12 }
     ])
 
     // 方法
     const formatNumber = (num) => {
-      return new Intl.NumberFormat('zh-TW').format(num)
+      return num.toLocaleString('zh-TW')
     }
 
     const getRiskColor = (score) => {
       if (score < 30) return 'success'
-      if (score < 60) return 'warning'
+      if (score < 70) return 'warning'
       return 'error'
     }
 
@@ -335,16 +264,13 @@ export default {
     }
 
     const closePosition = (item) => {
-      if (confirm(`確定要平倉 ${item.name} 嗎？`)) {
-        console.log('平倉:', item)
-      }
+      console.log('平倉:', item)
     }
 
     const openNews = (news) => {
       console.log('開啟新聞:', news)
     }
 
-    // 初始化圖表
     const initCharts = () => {
       // Portfolio Chart
       if (portfolioChart.value) {

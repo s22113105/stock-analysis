@@ -1,448 +1,464 @@
 <template>
-  <v-container fluid>
+  <div class="prediction-page">
     <v-row>
       <v-col cols="12">
-        <h1 class="text-h4 mb-4">股價預測分析系統</h1>
-      </v-col>
-    </v-row>
-
-    <!-- 股票選擇器 -->
-    <v-row>
-      <v-col cols="12">
-        <v-card>
-          <v-card-title>選擇股票</v-card-title>
-          <v-card-text>
-            <v-autocomplete
-              v-model="selectedStock"
-              :items="stockList"
-              :loading="loadingStocks"
-              :search-input.sync="stockSearch"
-              item-text="display_name"
-              item-value="id"
-              label="搜尋股票代碼或名稱"
-              placeholder="輸入股票代碼或名稱..."
-              prepend-icon="mdi-magnify"
-              return-object
-              clearable
-              @change="onStockSelected"
-            >
-              <template v-slot:item="{ item }">
-                <v-list-item-content>
-                  <v-list-item-title>
-                    {{ item.symbol }} - {{ item.name }}
-                  </v-list-item-title>
-                  <v-list-item-subtitle>
-                    最新價格: ${{ item.latest_price }} |
-                    漲跌: <span :class="getPriceChangeClass(item.change_percent)">
-                      {{ item.change_percent > 0 ? '+' : '' }}{{ item.change_percent }}%
-                    </span>
-                  </v-list-item-subtitle>
-                </v-list-item-content>
-              </template>
-            </v-autocomplete>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
-
-    <!-- 股票資訊卡片 -->
-    <v-row v-if="selectedStock">
-      <v-col cols="12" md="3">
-        <v-card>
-          <v-card-text>
-            <div class="text-overline">股票代碼</div>
-            <div class="text-h5">{{ selectedStock.symbol }}</div>
-            <div class="text-subtitle-1">{{ selectedStock.name }}</div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" md="3">
-        <v-card>
-          <v-card-text>
-            <div class="text-overline">最新價格</div>
-            <div class="text-h5">${{ selectedStock.latest_price }}</div>
-            <div class="text-subtitle-1" :class="getPriceChangeClass(selectedStock.change_percent)">
-              {{ selectedStock.change_percent > 0 ? '▲' : '▼' }}
-              {{ Math.abs(selectedStock.change_percent) }}%
-            </div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" md="3">
-        <v-card>
-          <v-card-text>
-            <div class="text-overline">成交量</div>
-            <div class="text-h5">{{ formatVolume(selectedStock.volume) }}</div>
-            <div class="text-subtitle-1">張</div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-
-      <v-col cols="12" md="3">
-        <v-card>
-          <v-card-text>
-            <div class="text-overline">更新時間</div>
-            <div class="text-h5">{{ formatTime(selectedStock.updated_at) }}</div>
-            <div class="text-subtitle-1">{{ formatDate(selectedStock.updated_at) }}</div>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
-
-    <!-- 預測圖表區域 -->
-    <v-row v-if="selectedStock">
-      <v-col cols="12">
-        <PredictionChart
-          :stock-id="selectedStock.id"
-          :stock-info="{
-            symbol: selectedStock.symbol,
-            name: selectedStock.name,
-            currentPrice: selectedStock.latest_price
-          }"
-          ref="predictionChart"
-        />
-      </v-col>
-    </v-row>
-
-    <!-- 歷史預測記錄 -->
-    <v-row v-if="selectedStock">
-      <v-col cols="12">
-        <v-card>
+        <v-card elevation="2">
           <v-card-title>
-            歷史預測記錄
-            <v-spacer />
-            <v-btn
-              color="primary"
-              small
-              @click="loadPredictionHistory"
-            >
-              <v-icon left>mdi-refresh</v-icon>
-              重新載入
+            <v-icon class="mr-2">mdi-crystal-ball</v-icon>
+            預測模型分析
+            <v-spacer></v-spacer>
+            <v-btn color="primary" prepend-icon="mdi-play" @click="runPrediction">
+              執行預測
             </v-btn>
           </v-card-title>
 
           <v-card-text>
+            <!-- 模型設定 -->
+            <v-row class="mb-4">
+              <v-col cols="12" md="3">
+                <v-text-field
+                  v-model="symbol"
+                  label="股票代碼"
+                  density="compact"
+                  hide-details
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-select
+                  v-model="selectedModel"
+                  :items="models"
+                  label="預測模型"
+                  density="compact"
+                  hide-details
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-select
+                  v-model="predictionDays"
+                  :items="[5, 10, 15, 20, 30]"
+                  label="預測天數"
+                  density="compact"
+                  hide-details
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-select
+                  v-model="trainingPeriod"
+                  :items="[30, 60, 90, 180, 365]"
+                  label="訓練期間"
+                  density="compact"
+                  hide-details
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="2">
+                <v-btn color="info" block prepend-icon="mdi-tune">
+                  參數調整
+                </v-btn>
+              </v-col>
+            </v-row>
+
+            <!-- 預測結果卡片 -->
+            <v-row class="mb-4">
+              <v-col cols="12" md="4">
+                <v-card color="primary" dark>
+                  <v-card-text>
+                    <div class="text-subtitle-2">當前價格</div>
+                    <div class="text-h4">${{ currentPrice }}</div>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-card :color="getPredictionColor()" dark>
+                  <v-card-text>
+                    <div class="text-subtitle-2">{{ predictionDays }}天預測價格</div>
+                    <div class="text-h4">${{ predictedPrice }}</div>
+                    <div class="text-caption">
+                      {{ getPredictionChange() }}%
+                      <v-icon>{{ getPredictionChange() >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
+                    </div>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-card color="info" dark>
+                  <v-card-text>
+                    <div class="text-subtitle-2">預測準確度</div>
+                    <div class="text-h4">{{ accuracy }}%</div>
+                    <v-progress-linear
+                      :model-value="accuracy"
+                      color="white"
+                      height="8"
+                      class="mt-2"
+                    ></v-progress-linear>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <!-- 預測走勢圖 -->
+            <v-row>
+              <v-col cols="12">
+                <v-card outlined>
+                  <v-card-title>
+                    預測走勢圖
+                    <v-spacer></v-spacer>
+                    <v-btn-toggle v-model="chartType" mandatory divided density="compact">
+                      <v-btn value="line">線圖</v-btn>
+                      <v-btn value="candlestick">K線</v-btn>
+                      <v-btn value="confidence">信賴區間</v-btn>
+                    </v-btn-toggle>
+                  </v-card-title>
+                  <v-card-text>
+                    <canvas ref="predictionChart" height="350"></canvas>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <!-- 模型指標 -->
+            <v-row class="mt-4">
+              <v-col cols="12" md="6">
+                <v-card outlined>
+                  <v-card-title>模型評估指標</v-card-title>
+                  <v-card-text>
+                    <v-list density="compact">
+                      <v-list-item>
+                        <template v-slot:prepend>
+                          <v-icon color="primary">mdi-chart-line</v-icon>
+                        </template>
+                        <v-list-item-title>RMSE (均方根誤差)</v-list-item-title>
+                        <template v-slot:append>
+                          <strong>{{ metrics.rmse }}</strong>
+                        </template>
+                      </v-list-item>
+
+                      <v-list-item>
+                        <template v-slot:prepend>
+                          <v-icon color="success">mdi-percent</v-icon>
+                        </template>
+                        <v-list-item-title>MAPE (平均絕對百分比誤差)</v-list-item-title>
+                        <template v-slot:append>
+                          <strong>{{ metrics.mape }}%</strong>
+                        </template>
+                      </v-list-item>
+
+                      <v-list-item>
+                        <template v-slot:prepend>
+                          <v-icon color="warning">mdi-trending-up</v-icon>
+                        </template>
+                        <v-list-item-title>MAE (平均絕對誤差)</v-list-item-title>
+                        <template v-slot:append>
+                          <strong>{{ metrics.mae }}</strong>
+                        </template>
+                      </v-list-item>
+
+                      <v-list-item>
+                        <template v-slot:prepend>
+                          <v-icon color="error">mdi-chart-bell-curve</v-icon>
+                        </template>
+                        <v-list-item-title>R² (決定係數)</v-list-item-title>
+                        <template v-slot:append>
+                          <strong>{{ metrics.r2 }}</strong>
+                        </template>
+                      </v-list-item>
+                    </v-list>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+
+              <v-col cols="12" md="6">
+                <v-card outlined>
+                  <v-card-title>預測區間</v-card-title>
+                  <v-card-text>
+                    <v-data-table
+                      :headers="intervalHeaders"
+                      :items="predictionIntervals"
+                      :items-per-page="5"
+                      density="compact"
+                    >
+                      <template v-slot:item.confidence="{ item }">
+                        <v-chip size="small" color="primary">
+                          {{ item.confidence }}%
+                        </v-chip>
+                      </template>
+                    </v-data-table>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <!-- 特徵重要性 -->
+            <v-row class="mt-4">
+              <v-col cols="12">
+                <v-card outlined>
+                  <v-card-title>特徵重要性分析</v-card-title>
+                  <v-card-text>
+                    <canvas ref="featureImportanceChart" height="200"></canvas>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- 模型比較 -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <v-card elevation="2">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-compare</v-icon>
+            模型比較
+          </v-card-title>
+          <v-card-text>
             <v-data-table
-              :headers="historyHeaders"
-              :items="predictionHistory"
-              :loading="loadingHistory"
+              :headers="comparisonHeaders"
+              :items="modelComparison"
               :items-per-page="10"
-              class="elevation-1"
+              item-value="model"
             >
-              <template v-slot:item.model_type="{ item }">
-                <v-chip :color="getModelColor(item.model_type)" small>
-                  {{ item.model_type.toUpperCase() }}
-                </v-chip>
-              </template>
-
-              <template v-slot:item.predicted_price="{ item }">
-                ${{ item.predicted_price.toFixed(2) }}
-              </template>
-
-              <template v-slot:item.confidence_interval="{ item }">
-                ${{ item.confidence_lower.toFixed(2) }} - ${{ item.confidence_upper.toFixed(2) }}
-              </template>
-
               <template v-slot:item.accuracy="{ item }">
-                <v-chip
-                  :color="getAccuracyColor(item.accuracy)"
-                  small
-                  v-if="item.accuracy"
-                >
-                  {{ item.accuracy.toFixed(1) }}%
+                <v-chip :color="getAccuracyColor(item.accuracy)" size="small">
+                  {{ item.accuracy }}%
                 </v-chip>
-                <span v-else>---</span>
+              </template>
+
+              <template v-slot:item.speed="{ item }">
+                <v-rating
+                  :model-value="item.speed"
+                  color="yellow-darken-3"
+                  density="compact"
+                  size="small"
+                  readonly
+                ></v-rating>
+              </template>
+
+              <template v-slot:item.status="{ item }">
+                <v-chip :color="item.status === '已訓練' ? 'success' : 'grey'" size="small">
+                  {{ item.status }}
+                </v-chip>
               </template>
 
               <template v-slot:item.actions="{ item }">
-                <v-btn
-                  icon
-                  small
-                  @click="viewPredictionDetail(item)"
-                >
-                  <v-icon small>mdi-eye</v-icon>
-                </v-btn>
-
-                <v-btn
-                  icon
-                  small
-                  color="error"
-                  @click="deletePrediction(item.id)"
-                >
-                  <v-icon small>mdi-delete</v-icon>
-                </v-btn>
+                <v-btn icon="mdi-play" size="small" variant="text" color="primary" @click="runModel(item)"></v-btn>
+                <v-btn icon="mdi-cog" size="small" variant="text" @click="configureModel(item)"></v-btn>
               </template>
             </v-data-table>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
-
-    <!-- 預測詳情對話框 -->
-    <v-dialog v-model="detailDialog" max-width="800">
-      <v-card v-if="selectedPrediction">
-        <v-card-title>
-          預測詳情
-          <v-spacer />
-          <v-btn icon @click="detailDialog = false">
-            <v-icon>mdi-close</v-icon>
-          </v-btn>
-        </v-card-title>
-
-        <v-card-text>
-          <v-simple-table>
-            <tbody>
-              <tr>
-                <td class="font-weight-bold">模型類型</td>
-                <td>{{ selectedPrediction.model_type.toUpperCase() }}</td>
-              </tr>
-              <tr>
-                <td class="font-weight-bold">預測日期</td>
-                <td>{{ selectedPrediction.prediction_date }}</td>
-              </tr>
-              <tr>
-                <td class="font-weight-bold">目標日期</td>
-                <td>{{ selectedPrediction.target_date }}</td>
-              </tr>
-              <tr>
-                <td class="font-weight-bold">預測價格</td>
-                <td>${{ selectedPrediction.predicted_price.toFixed(2) }}</td>
-              </tr>
-              <tr>
-                <td class="font-weight-bold">信賴區間</td>
-                <td>
-                  ${{ selectedPrediction.confidence_lower.toFixed(2) }} -
-                  ${{ selectedPrediction.confidence_upper.toFixed(2) }}
-                </td>
-              </tr>
-              <tr>
-                <td class="font-weight-bold">信賴水準</td>
-                <td>{{ (selectedPrediction.confidence_level * 100).toFixed(0) }}%</td>
-              </tr>
-              <tr v-if="selectedPrediction.parameters">
-                <td class="font-weight-bold">模型參數</td>
-                <td>
-                  <pre>{{ JSON.stringify(selectedPrediction.parameters, null, 2) }}</pre>
-                </td>
-              </tr>
-            </tbody>
-          </v-simple-table>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
-  </v-container>
+  </div>
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
-import axios from 'axios'
-import PredictionChart from '@/components/PredictionChart.vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import Chart from 'chart.js/auto'
 
 export default {
   name: 'PredictionAnalysis',
-
-  components: {
-    PredictionChart
-  },
-
   setup() {
-    // 資料狀態
-    const selectedStock = ref(null)
-    const stockList = ref([])
-    const stockSearch = ref('')
-    const loadingStocks = ref(false)
-    const predictionHistory = ref([])
-    const loadingHistory = ref(false)
-    const detailDialog = ref(false)
-    const selectedPrediction = ref(null)
+    // 狀態
+    const symbol = ref('2330')
+    const selectedModel = ref('LSTM')
+    const predictionDays = ref(10)
+    const trainingPeriod = ref(90)
+    const chartType = ref('line')
+
+    const models = ['LSTM', 'ARIMA', 'GARCH', 'Prophet', 'Random Forest']
+
+    // 預測數據
+    const currentPrice = ref(595)
+    const predictedPrice = ref(612)
+    const accuracy = ref(85)
+
+    // 評估指標
+    const metrics = ref({
+      rmse: 8.23,
+      mape: 2.45,
+      mae: 6.78,
+      r2: 0.92
+    })
 
     // 圖表參考
     const predictionChart = ref(null)
+    const featureImportanceChart = ref(null)
+    let chartInstances = []
 
     // 表格標題
-    const historyHeaders = [
-      { text: '模型', value: 'model_type', width: '120' },
-      { text: '預測日期', value: 'prediction_date' },
-      { text: '目標日期', value: 'target_date' },
-      { text: '預測價格', value: 'predicted_price' },
-      { text: '信賴區間', value: 'confidence_interval' },
-      { text: '準確度', value: 'accuracy' },
-      { text: '操作', value: 'actions', sortable: false }
-    ]
+    const intervalHeaders = ref([
+      { title: '信賴區間', key: 'confidence' },
+      { title: '下界', key: 'lower' },
+      { title: '預測值', key: 'predicted' },
+      { title: '上界', key: 'upper' }
+    ])
 
-    // 載入股票清單
-    const loadStocks = async () => {
-      loadingStocks.value = true
+    const predictionIntervals = ref([
+      { confidence: 99, lower: 585, predicted: 612, upper: 639 },
+      { confidence: 95, lower: 592, predicted: 612, upper: 632 },
+      { confidence: 90, lower: 596, predicted: 612, upper: 628 },
+      { confidence: 80, lower: 600, predicted: 612, upper: 624 },
+      { confidence: 68, lower: 604, predicted: 612, upper: 620 }
+    ])
 
-      try {
-        const response = await axios.get('/api/stocks', {
-          params: {
-            search: stockSearch.value,
-            limit: 20
-          }
-        })
+    const comparisonHeaders = ref([
+      { title: '模型', key: 'model' },
+      { title: '準確度', key: 'accuracy' },
+      { title: 'RMSE', key: 'rmse' },
+      { title: '訓練時間', key: 'trainingTime' },
+      { title: '速度', key: 'speed' },
+      { title: '狀態', key: 'status' },
+      { title: '操作', key: 'actions', sortable: false }
+    ])
 
-        stockList.value = response.data.data.map(stock => ({
-          ...stock,
-          display_name: `${stock.symbol} - ${stock.name}`
-        }))
-      } catch (error) {
-        console.error('載入股票失敗:', error)
-      } finally {
-        loadingStocks.value = false
-      }
+    const modelComparison = ref([
+      { model: 'LSTM', accuracy: 85, rmse: 8.23, trainingTime: '15分鐘', speed: 3, status: '已訓練' },
+      { model: 'ARIMA', accuracy: 78, rmse: 12.45, trainingTime: '2分鐘', speed: 5, status: '已訓練' },
+      { model: 'GARCH', accuracy: 72, rmse: 15.67, trainingTime: '3分鐘', speed: 4, status: '已訓練' },
+      { model: 'Prophet', accuracy: 80, rmse: 10.89, trainingTime: '8分鐘', speed: 4, status: '已訓練' },
+      { model: 'Random Forest', accuracy: 76, rmse: 13.21, trainingTime: '5分鐘', speed: 4, status: '未訓練' }
+    ])
+
+    // 計算屬性
+    const getPredictionChange = () => {
+      return (((predictedPrice.value - currentPrice.value) / currentPrice.value) * 100).toFixed(2)
     }
 
-    // 選擇股票
-    const onStockSelected = (stock) => {
-      if (stock) {
-        loadPredictionHistory()
-      }
+    const getPredictionColor = () => {
+      const change = getPredictionChange()
+      return change >= 0 ? 'success' : 'error'
     }
 
-    // 載入預測歷史
-    const loadPredictionHistory = async () => {
-      if (!selectedStock.value) return
-
-      loadingHistory.value = true
-
-      try {
-        const response = await axios.get('/api/predictions', {
-          params: {
-            stock_id: selectedStock.value.id,
-            per_page: 50
-          }
-        })
-
-        predictionHistory.value = response.data.data.data
-      } catch (error) {
-        console.error('載入預測歷史失敗:', error)
-      } finally {
-        loadingHistory.value = false
-      }
-    }
-
-    // 查看預測詳情
-    const viewPredictionDetail = (prediction) => {
-      selectedPrediction.value = prediction
-      detailDialog.value = true
-    }
-
-    // 刪除預測
-    const deletePrediction = async (id) => {
-      if (!confirm('確定要刪除這筆預測記錄嗎？')) return
-
-      try {
-        await axios.delete(`/api/predictions/${id}`)
-        loadPredictionHistory()
-      } catch (error) {
-        console.error('刪除預測失敗:', error)
-        alert('刪除失敗: ' + error.message)
-      }
-    }
-
-    // 格式化成交量
-    const formatVolume = (volume) => {
-      if (volume > 100000000) {
-        return (volume / 100000000).toFixed(2) + '億'
-      }
-      if (volume > 10000) {
-        return (volume / 10000).toFixed(0) + '萬'
-      }
-      return volume.toLocaleString()
-    }
-
-    // 格式化日期
-    const formatDate = (dateString) => {
-      if (!dateString) return '---'
-      const date = new Date(dateString)
-      return date.toLocaleDateString('zh-TW')
-    }
-
-    // 格式化時間
-    const formatTime = (dateString) => {
-      if (!dateString) return '---'
-      const date = new Date(dateString)
-      return date.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
-    }
-
-    // 取得價格變化樣式
-    const getPriceChangeClass = (changePercent) => {
-      if (changePercent > 0) return 'text-success'
-      if (changePercent < 0) return 'text-error'
-      return 'text-grey'
-    }
-
-    // 取得模型顏色
-    const getModelColor = (model) => {
-      const colors = {
-        'lstm': 'success',
-        'arima': 'info',
-        'garch': 'warning',
-        'monte_carlo': 'primary'
-      }
-      return colors[model] || 'grey'
-    }
-
-    // 取得準確度顏色
     const getAccuracyColor = (accuracy) => {
-      if (accuracy >= 90) return 'success'
-      if (accuracy >= 75) return 'info'
-      if (accuracy >= 60) return 'warning'
+      if (accuracy >= 80) return 'success'
+      if (accuracy >= 70) return 'warning'
       return 'error'
     }
 
-    // 元件掛載
+    // 方法
+    const runPrediction = () => {
+      console.log('執行預測')
+    }
+
+    const runModel = (model) => {
+      console.log('執行模型:', model)
+    }
+
+    const configureModel = (model) => {
+      console.log('設定模型:', model)
+    }
+
+    const initCharts = () => {
+      // Prediction Chart
+      if (predictionChart.value) {
+        const ctx = predictionChart.value.getContext('2d')
+        const chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: Array.from({ length: 40 }, (_, i) => `Day ${i + 1}`),
+            datasets: [
+              {
+                label: '歷史價格',
+                data: Array.from({ length: 30 }, () => Math.random() * 50 + 570),
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1
+              },
+              {
+                label: '預測價格',
+                data: Array.from({ length: 11 }, (_, i) => {
+                  if (i === 0) return null
+                  return 595 + (i * 1.7) + (Math.random() * 5 - 2.5)
+                }),
+                borderColor: 'rgb(255, 99, 132)',
+                backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                borderDash: [5, 5],
+                tension: 0.1
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: 'index',
+              intersect: false
+            }
+          }
+        })
+        chartInstances.push(chart)
+      }
+
+      // Feature Importance Chart
+      if (featureImportanceChart.value) {
+        const ctx = featureImportanceChart.value.getContext('2d')
+        const chart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['收盤價', '成交量', '波動率', '技術指標', 'RSI', 'MACD', '外部因素'],
+            datasets: [{
+              label: '重要性分數',
+              data: [0.85, 0.72, 0.68, 0.55, 0.48, 0.42, 0.35],
+              backgroundColor: [
+                'rgba(255, 99, 132, 0.6)',
+                'rgba(54, 162, 235, 0.6)',
+                'rgba(255, 206, 86, 0.6)',
+                'rgba(75, 192, 192, 0.6)',
+                'rgba(153, 102, 255, 0.6)',
+                'rgba(255, 159, 64, 0.6)',
+                'rgba(199, 199, 199, 0.6)'
+              ]
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y'
+          }
+        })
+        chartInstances.push(chart)
+      }
+    }
+
     onMounted(() => {
-      loadStocks()
+      initCharts()
+    })
+
+    onUnmounted(() => {
+      chartInstances.forEach(chart => chart.destroy())
     })
 
     return {
-      selectedStock,
-      stockList,
-      stockSearch,
-      loadingStocks,
-      predictionHistory,
-      loadingHistory,
-      detailDialog,
-      selectedPrediction,
+      symbol,
+      selectedModel,
+      predictionDays,
+      trainingPeriod,
+      chartType,
+      models,
+      currentPrice,
+      predictedPrice,
+      accuracy,
+      metrics,
       predictionChart,
-      historyHeaders,
-      loadStocks,
-      onStockSelected,
-      loadPredictionHistory,
-      viewPredictionDetail,
-      deletePrediction,
-      formatVolume,
-      formatDate,
-      formatTime,
-      getPriceChangeClass,
-      getModelColor,
-      getAccuracyColor
+      featureImportanceChart,
+      intervalHeaders,
+      predictionIntervals,
+      comparisonHeaders,
+      modelComparison,
+      getPredictionChange,
+      getPredictionColor,
+      getAccuracyColor,
+      runPrediction,
+      runModel,
+      configureModel
     }
   }
 }
 </script>
 
 <style scoped>
-.text-success {
-  color: #4caf50;
-}
-
-.text-error {
-  color: #f44336;
-}
-
-.text-grey {
-  color: #9e9e9e;
-}
-
-pre {
-  font-size: 12px;
-  background-color: #f5f5f5;
-  padding: 8px;
-  border-radius: 4px;
+.prediction-page {
+  padding: 16px;
 }
 </style>
