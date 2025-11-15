@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Stock;
@@ -22,7 +22,7 @@ class DashboardController extends Controller
 {
     /**
      * 取得儀表板統計資料
-     * 
+     *
      * GET /api/dashboard/stats
      */
     public function stats(Request $request): JsonResponse
@@ -39,7 +39,7 @@ class DashboardController extends Controller
                             $q->where('trade_date', now()->format('Y-m-d'));
                         })->count(),
                     ],
-                    
+
                     // 選擇權統計
                     'options' => [
                         'total' => Option::count(),
@@ -49,21 +49,21 @@ class DashboardController extends Controller
                             ->where('expiry_date', '>=', now()->format('Y-m-d'))
                             ->count(),
                     ],
-                    
+
                     // 預測統計
                     'predictions' => [
                         'total' => Prediction::count(),
                         'today' => Prediction::whereDate('prediction_date', today())->count(),
                         'accuracy' => $this->calculatePredictionAccuracy(),
                     ],
-                    
+
                     // 回測統計
                     'backtests' => [
                         'total' => BacktestResult::count(),
                         'profitable' => BacktestResult::where('total_return', '>', 0)->count(),
                         'avg_return' => BacktestResult::avg('total_return'),
                     ],
-                    
+
                     // 系統狀態
                     'system' => [
                         'last_update' => $this->getLastUpdateTime(),
@@ -76,7 +76,6 @@ class DashboardController extends Controller
                 'success' => true,
                 'data' => $stats
             ]);
-
         } catch (\Exception $e) {
             Log::error('儀表板統計查詢錯誤', [
                 'error' => $e->getMessage(),
@@ -92,7 +91,7 @@ class DashboardController extends Controller
 
     /**
      * 取得投資組合資料
-     * 
+     *
      * GET /api/dashboard/portfolio
      */
     public function portfolio(Request $request): JsonResponse
@@ -113,7 +112,7 @@ class DashboardController extends Controller
 
                     $change = 0;
                     $changePercent = 0;
-                    
+
                     if ($latestPrice && $prevPrice) {
                         $change = $latestPrice->close - $prevPrice->close;
                         $changePercent = ($change / $prevPrice->close) * 100;
@@ -146,7 +145,6 @@ class DashboardController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('投資組合查詢錯誤', [
                 'error' => $e->getMessage(),
@@ -162,7 +160,7 @@ class DashboardController extends Controller
 
     /**
      * 取得績效分析
-     * 
+     *
      * GET /api/dashboard/performance
      */
     public function performance(Request $request): JsonResponse
@@ -173,10 +171,10 @@ class DashboardController extends Controller
 
             // 獲取市場表現
             $marketPerformance = StockPrice::select(
-                    'trade_date',
-                    DB::raw('AVG(close) as avg_close'),
-                    DB::raw('SUM(volume) as total_volume')
-                )
+                'trade_date',
+                DB::raw('AVG(close) as avg_close'),
+                DB::raw('SUM(volume) as total_volume')
+            )
                 ->where('trade_date', '>=', $startDate)
                 ->groupBy('trade_date')
                 ->orderBy('trade_date')
@@ -202,9 +200,9 @@ class DashboardController extends Controller
                         ->where('trade_date', '>=', $startDate)
                         ->orderBy('trade_date')
                         ->first();
-                    
+
                     $latestPrice = $stock->latestPrice;
-                    
+
                     if ($firstPrice && $latestPrice) {
                         $change = (($latestPrice->close - $firstPrice->close) / $firstPrice->close) * 100;
                         return [
@@ -230,9 +228,9 @@ class DashboardController extends Controller
                         ->where('trade_date', '>=', $startDate)
                         ->orderBy('trade_date')
                         ->first();
-                    
+
                     $latestPrice = $stock->latestPrice;
-                    
+
                     if ($firstPrice && $latestPrice) {
                         $change = (($latestPrice->close - $firstPrice->close) / $firstPrice->close) * 100;
                         return [
@@ -258,7 +256,6 @@ class DashboardController extends Controller
                     'top_losers' => $topLosers,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('績效分析查詢錯誤', [
                 'error' => $e->getMessage(),
@@ -274,7 +271,7 @@ class DashboardController extends Controller
 
     /**
      * 取得警示資訊
-     * 
+     *
      * GET /api/dashboard/alerts
      */
     public function alerts(Request $request): JsonResponse
@@ -331,7 +328,6 @@ class DashboardController extends Controller
                     'total' => count($alerts),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('警示查詢錯誤', [
                 'error' => $e->getMessage(),
@@ -367,7 +363,6 @@ class DashboardController extends Controller
             }
 
             return round($accuracySum / $predictions->count(), 2);
-
         } catch (\Exception $e) {
             Log::error('預測準確度計算錯誤', ['error' => $e->getMessage()]);
             return 0;
@@ -385,7 +380,6 @@ class DashboardController extends Controller
                 ->first();
 
             return $latestPrice ? $latestPrice->updated_at->toDateTimeString() : 'N/A';
-
         } catch (\Exception $e) {
             return 'N/A';
         }
@@ -398,7 +392,7 @@ class DashboardController extends Controller
     {
         try {
             $latestPrice = StockPrice::orderBy('trade_date', 'desc')->first();
-            
+
             if (!$latestPrice) {
                 return 'no_data';
             }
@@ -414,7 +408,6 @@ class DashboardController extends Controller
             } else {
                 return 'stale';
             }
-
         } catch (\Exception $e) {
             return 'unknown';
         }

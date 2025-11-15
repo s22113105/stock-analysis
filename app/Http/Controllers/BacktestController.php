@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\BacktestResult;
@@ -19,7 +19,7 @@ class BacktestController extends Controller
 {
     /**
      * 取得回測列表
-     * 
+     *
      * GET /api/backtest
      */
     public function index(Request $request): JsonResponse
@@ -62,7 +62,7 @@ class BacktestController extends Controller
 
     /**
      * 執行回測
-     * 
+     *
      * POST /api/backtest/run
      */
     public function run(Request $request): JsonResponse
@@ -149,7 +149,6 @@ class BacktestController extends Controller
                     'results' => $result,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('回測執行錯誤', [
                 'stock_id' => $request->input('stock_id'),
@@ -167,7 +166,7 @@ class BacktestController extends Controller
 
     /**
      * 取得單一回測詳情
-     * 
+     *
      * GET /api/backtest/{id}
      */
     public function show(int $id): JsonResponse
@@ -188,7 +187,7 @@ class BacktestController extends Controller
 
     /**
      * 刪除回測
-     * 
+     *
      * DELETE /api/backtest/{id}
      */
     public function destroy(int $id): JsonResponse
@@ -201,7 +200,6 @@ class BacktestController extends Controller
                 'success' => true,
                 'message' => '回測已刪除'
             ]);
-
         } catch (\Exception $e) {
             Log::error('回測刪除錯誤', [
                 'backtest_id' => $id,
@@ -217,7 +215,7 @@ class BacktestController extends Controller
 
     /**
      * 取得可用策略列表
-     * 
+     *
      * GET /api/backtest/strategies
      */
     public function strategies(): JsonResponse
@@ -287,7 +285,7 @@ class BacktestController extends Controller
 
     /**
      * 比較多個回測結果
-     * 
+     *
      * POST /api/backtest/compare
      */
     public function compare(Request $request): JsonResponse
@@ -333,7 +331,6 @@ class BacktestController extends Controller
                     'best_win_rate' => $comparison->sortByDesc('win_rate')->first(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('回測比較錯誤', [
                 'error' => $e->getMessage(),
@@ -355,7 +352,7 @@ class BacktestController extends Controller
         $initialCapital = $capital;
         $position = 0; // 持股數量
         $trades = [];
-        
+
         $equity = [$capital]; // 權益曲線
         $maxEquity = $capital;
         $maxDrawdown = 0;

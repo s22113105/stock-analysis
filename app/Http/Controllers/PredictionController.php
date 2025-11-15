@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Prediction;
@@ -18,7 +18,7 @@ class PredictionController extends Controller
 {
     /**
      * 取得預測列表
-     * 
+     *
      * GET /api/predictions
      */
     public function index(Request $request): JsonResponse
@@ -61,7 +61,7 @@ class PredictionController extends Controller
 
     /**
      * 執行預測
-     * 
+     *
      * POST /api/predictions/run
      */
     public function run(Request $request): JsonResponse
@@ -141,7 +141,6 @@ class PredictionController extends Controller
                     'total_predictions' => count($predictions),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('預測執行錯誤', [
                 'stock_id' => $request->input('stock_id'),
@@ -159,7 +158,7 @@ class PredictionController extends Controller
 
     /**
      * 取得單一預測詳情
-     * 
+     *
      * GET /api/predictions/{id}
      */
     public function show(int $id): JsonResponse
@@ -174,7 +173,7 @@ class PredictionController extends Controller
 
     /**
      * 刪除預測
-     * 
+     *
      * DELETE /api/predictions/{id}
      */
     public function destroy(int $id): JsonResponse
@@ -187,7 +186,6 @@ class PredictionController extends Controller
                 'success' => true,
                 'message' => '預測已刪除'
             ]);
-
         } catch (\Exception $e) {
             Log::error('預測刪除錯誤', [
                 'prediction_id' => $id,
@@ -203,7 +201,7 @@ class PredictionController extends Controller
 
     /**
      * LSTM 預測
-     * 
+     *
      * POST /api/predictions/lstm
      */
     public function lstm(Request $request): JsonResponse
@@ -236,7 +234,7 @@ class PredictionController extends Controller
 
     /**
      * ARIMA 預測
-     * 
+     *
      * POST /api/predictions/arima
      */
     public function arima(Request $request): JsonResponse
@@ -271,7 +269,7 @@ class PredictionController extends Controller
 
     /**
      * Monte Carlo 模擬預測
-     * 
+     *
      * POST /api/predictions/monte-carlo
      */
     public function monteCarlo(Request $request): JsonResponse
@@ -395,7 +393,7 @@ class PredictionController extends Controller
             $drift = 0.0001; // 假設日報酬率
             $random = $this->randomNormal(0, 1);
             $change = $drift + ($volatility * $random);
-            
+
             $predictedPrice = $basePrice * exp($change);
 
             $predictions[] = [
@@ -437,9 +435,9 @@ class PredictionController extends Controller
         // Box-Muller Transform
         $u1 = mt_rand() / mt_getrandmax();
         $u2 = mt_rand() / mt_getrandmax();
-        
+
         $z = sqrt(-2 * log($u1)) * cos(2 * pi() * $u2);
-        
+
         return $mean + ($stdDev * $z);
     }
 }

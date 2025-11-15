@@ -4,197 +4,252 @@
       <v-col cols="12">
         <v-card elevation="2">
           <v-card-title>
-            <v-icon class="mr-2">mdi-crystal-ball</v-icon>
-            預測模型分析
+            <v-icon class="mr-2">mdi-chart-line</v-icon>
+            TXO 明日收盤價預測
             <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-play" @click="runPrediction">
+            <v-btn
+              color="primary"
+              prepend-icon="mdi-play"
+              @click="runPrediction"
+              :loading="loading"
+              :disabled="!selectedOption"
+              size="large"
+            >
               執行預測
             </v-btn>
           </v-card-title>
 
           <v-card-text>
-            <!-- 模型設定 -->
+            <!-- 預測設定區域 -->
             <v-row class="mb-4">
-              <v-col cols="12" md="3">
-                <v-text-field
-                  v-model="symbol"
-                  label="股票代碼"
-                  density="compact"
-                  hide-details
-                ></v-text-field>
+              <!-- TXO 選擇權合約選擇 -->
+              <v-col cols="12" md="5">
+                <v-autocomplete
+                  v-model="selectedOption"
+                  :items="optionsList"
+                  :loading="loadingOptions"
+                  item-title="display_name"
+                  item-value="id"
+                  label="選擇 TXO 合約"
+                  placeholder="輸入合約代碼或履約價搜尋..."
+                  density="comfortable"
+                  clearable
+                >
+                  <template v-slot:prepend-inner>
+                    <v-icon color="primary">mdi-file-document-outline</v-icon>
+                  </template>
+                  <template v-slot:item="{ props, item }">
+                    <v-list-item v-bind="props">
+                      <template v-slot:prepend>
+                        <v-chip
+                          :color="item.raw.option_type === 'call' ? 'success' : 'error'"
+                          size="small"
+                          class="font-weight-bold"
+                        >
+                          {{ item.raw.option_type === 'call' ? 'Call' : 'Put' }}
+                        </v-chip>
+                      </template>
+                      <template v-slot:subtitle>
+                        履約價: {{ item.raw.strike_price }} | 到期: {{ item.raw.expiry_date }}
+                      </template>
+                    </v-list-item>
+                  </template>
+                </v-autocomplete>
               </v-col>
+
+              <!-- 預測模型選擇 -->
               <v-col cols="12" md="3">
                 <v-select
                   v-model="selectedModel"
                   :items="models"
+                  item-title="text"
+                  item-value="value"
                   label="預測模型"
-                  density="compact"
-                  hide-details
-                ></v-select>
+                  density="comfortable"
+                >
+                  <template v-slot:prepend-inner>
+                    <v-icon color="primary">mdi-brain</v-icon>
+                  </template>
+                </v-select>
               </v-col>
-              <v-col cols="12" md="2">
-                <v-select
-                  v-model="predictionDays"
-                  :items="[5, 10, 15, 20, 30]"
-                  label="預測天數"
-                  density="compact"
-                  hide-details
-                ></v-select>
-              </v-col>
+
+              <!-- 訓練期間 -->
               <v-col cols="12" md="2">
                 <v-select
                   v-model="trainingPeriod"
-                  :items="[30, 60, 90, 180, 365]"
+                  :items="[30, 60, 90]"
                   label="訓練期間"
-                  density="compact"
-                  hide-details
-                ></v-select>
+                  density="comfortable"
+                  suffix="天"
+                >
+                  <template v-slot:prepend-inner>
+                    <v-icon color="primary">mdi-calendar</v-icon>
+                  </template>
+                </v-select>
               </v-col>
+
+              <!-- 進階設定 -->
               <v-col cols="12" md="2">
-                <v-btn color="info" block prepend-icon="mdi-tune">
-                  參數調整
+                <v-btn
+                  color="grey-darken-1"
+                  block
+                  prepend-icon="mdi-cog"
+                  @click="showParametersDialog = true"
+                  variant="outlined"
+                  height="40"
+                >
+                  進階設定
                 </v-btn>
               </v-col>
             </v-row>
 
             <!-- 預測結果卡片 -->
-            <v-row class="mb-4">
-              <v-col cols="12" md="4">
-                <v-card color="primary" dark>
-                  <v-card-text>
-                    <div class="text-subtitle-2">當前價格</div>
-                    <div class="text-h4">${{ currentPrice }}</div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-card :color="getPredictionColor()" dark>
-                  <v-card-text>
-                    <div class="text-subtitle-2">{{ predictionDays }}天預測價格</div>
-                    <div class="text-h4">${{ predictedPrice }}</div>
-                    <div class="text-caption">
-                      {{ getPredictionChange() }}%
-                      <v-icon>{{ getPredictionChange() >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
+            <v-row v-if="predictionResult" class="mt-2">
+              <v-col cols="12">
+                <v-card elevation="4" class="prediction-result-card">
+                  <v-card-text class="pa-6">
+                    <!-- 合約資訊 -->
+                    <div class="d-flex align-center mb-4">
+                      <v-chip
+                        :color="predictionResult.target_info.option_type === 'call' ? 'success' : 'error'"
+                        size="large"
+                        class="mr-3"
+                      >
+                        {{ predictionResult.target_info.option_type === 'call' ? 'Call' : 'Put' }}
+                      </v-chip>
+                      <div>
+                        <div class="text-h6">{{ predictionResult.target_info.option_code }}</div>
+                        <div class="text-caption text-grey">
+                          履約價 {{ predictionResult.target_info.strike_price }} |
+                          到期日 {{ predictionResult.target_info.expiry_date }}
+                        </div>
+                      </div>
+                    </div>
+
+                    <v-divider class="my-4"></v-divider>
+
+                    <!-- 價格預測 -->
+                    <v-row align="center" class="my-4">
+                      <!-- 今日收盤價 -->
+                      <v-col cols="12" md="5">
+                        <v-card color="grey-lighten-4" flat class="pa-4 text-center">
+                          <div class="text-caption text-grey-darken-1 mb-1">今日收盤價</div>
+                          <div class="text-h4 font-weight-bold text-grey-darken-3">
+                            ${{ currentPrice }}
+                          </div>
+                          <div class="text-caption text-grey mt-1">
+                            {{ predictionResult.current_date }}
+                          </div>
+                        </v-card>
+                      </v-col>
+
+                      <!-- 箭頭 -->
+                      <v-col cols="12" md="2" class="text-center">
+                        <v-icon size="48" :color="getPredictionColor()">
+                          mdi-arrow-right-thick
+                        </v-icon>
+                        <div class="text-caption text-grey mt-2">預測</div>
+                      </v-col>
+
+                      <!-- 明日預測價格 -->
+                      <v-col cols="12" md="5">
+                        <v-card :color="getPredictionColor()" dark flat class="pa-4 text-center">
+                          <div class="text-caption mb-1" style="opacity: 0.9">明日預測收盤價</div>
+                          <div class="text-h4 font-weight-bold">
+                            ${{ predictedPrice }}
+                          </div>
+                          <div class="text-h6 mt-2">
+                            <v-icon size="20">
+                              {{ getPredictionChange() >= 0 ? 'mdi-trending-up' : 'mdi-trending-down' }}
+                            </v-icon>
+                            {{ getPredictionChange() >= 0 ? '+' : '' }}{{ getPredictionChange() }}%
+                          </div>
+                        </v-card>
+                      </v-col>
+                    </v-row>
+
+                    <v-divider class="my-4"></v-divider>
+
+                    <!-- 信賴區間 -->
+                    <div class="text-center">
+                      <div class="text-caption text-grey mb-2">
+                        95% 信賴區間
+                      </div>
+                      <div class="text-h6 text-grey-darken-2">
+                        ${{ confidenceLower }} ~ ${{ confidenceUpper }}
+                      </div>
+                      <div class="text-caption text-grey mt-1">
+                        預測價格有 95% 機率落在此區間
+                      </div>
                     </div>
                   </v-card-text>
                 </v-card>
               </v-col>
-              <v-col cols="12" md="4">
-                <v-card color="info" dark>
-                  <v-card-text>
-                    <div class="text-subtitle-2">預測準確度</div>
-                    <div class="text-h4">{{ accuracy }}%</div>
-                    <v-progress-linear
-                      :model-value="accuracy"
-                      color="white"
-                      height="8"
-                      class="mt-2"
-                    ></v-progress-linear>
-                  </v-card-text>
-                </v-card>
-              </v-col>
             </v-row>
 
-            <!-- 預測走勢圖 -->
-            <v-row>
+            <!-- 歷史走勢圖（可選顯示） -->
+            <v-row v-if="predictionResult && showChart" class="mt-4">
               <v-col cols="12">
                 <v-card outlined>
-                  <v-card-title>
-                    預測走勢圖
-                    <v-spacer></v-spacer>
-                    <v-btn-toggle v-model="chartType" mandatory divided density="compact">
-                      <v-btn value="line">線圖</v-btn>
-                      <v-btn value="candlestick">K線</v-btn>
-                      <v-btn value="confidence">信賴區間</v-btn>
-                    </v-btn-toggle>
+                  <v-card-title class="d-flex justify-space-between align-center">
+                    <span>價格走勢</span>
+                    <v-chip size="small" :color="getModelColor(selectedModel)">
+                      {{ getModelName(selectedModel) }} 模型
+                    </v-chip>
                   </v-card-title>
                   <v-card-text>
-                    <canvas ref="predictionChart" height="350"></canvas>
+                    <canvas ref="predictionChart" height="300"></canvas>
                   </v-card-text>
                 </v-card>
               </v-col>
             </v-row>
 
-            <!-- 模型指標 -->
-            <v-row class="mt-4">
-              <v-col cols="12" md="6">
-                <v-card outlined>
-                  <v-card-title>模型評估指標</v-card-title>
-                  <v-card-text>
-                    <v-list density="compact">
-                      <v-list-item>
-                        <template v-slot:prepend>
-                          <v-icon color="primary">mdi-chart-line</v-icon>
-                        </template>
-                        <v-list-item-title>RMSE (均方根誤差)</v-list-item-title>
-                        <template v-slot:append>
-                          <strong>{{ metrics.rmse }}</strong>
-                        </template>
-                      </v-list-item>
-
-                      <v-list-item>
-                        <template v-slot:prepend>
-                          <v-icon color="success">mdi-percent</v-icon>
-                        </template>
-                        <v-list-item-title>MAPE (平均絕對百分比誤差)</v-list-item-title>
-                        <template v-slot:append>
-                          <strong>{{ metrics.mape }}%</strong>
-                        </template>
-                      </v-list-item>
-
-                      <v-list-item>
-                        <template v-slot:prepend>
-                          <v-icon color="warning">mdi-trending-up</v-icon>
-                        </template>
-                        <v-list-item-title>MAE (平均絕對誤差)</v-list-item-title>
-                        <template v-slot:append>
-                          <strong>{{ metrics.mae }}</strong>
-                        </template>
-                      </v-list-item>
-
-                      <v-list-item>
-                        <template v-slot:prepend>
-                          <v-icon color="error">mdi-chart-bell-curve</v-icon>
-                        </template>
-                        <v-list-item-title>R² (決定係數)</v-list-item-title>
-                        <template v-slot:append>
-                          <strong>{{ metrics.r2 }}</strong>
-                        </template>
-                      </v-list-item>
-                    </v-list>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-
-              <v-col cols="12" md="6">
-                <v-card outlined>
-                  <v-card-title>預測區間</v-card-title>
-                  <v-card-text>
-                    <v-data-table
-                      :headers="intervalHeaders"
-                      :items="predictionIntervals"
-                      :items-per-page="5"
-                      density="compact"
-                    >
-                      <template v-slot:item.confidence="{ item }">
-                        <v-chip size="small" color="primary">
-                          {{ item.confidence }}%
-                        </v-chip>
-                      </template>
-                    </v-data-table>
-                  </v-card-text>
-                </v-card>
+            <!-- 顯示圖表按鈕 -->
+            <v-row v-if="predictionResult" class="mt-2">
+              <v-col cols="12" class="text-center">
+                <v-btn
+                  @click="showChart = !showChart"
+                  variant="text"
+                  prepend-icon="mdi-chart-line"
+                  color="primary"
+                >
+                  {{ showChart ? '隱藏' : '顯示' }}歷史走勢圖
+                </v-btn>
               </v-col>
             </v-row>
 
-            <!-- 特徵重要性 -->
-            <v-row class="mt-4">
+            <!-- 空狀態 -->
+            <v-row v-if="!predictionResult && !loading">
               <v-col cols="12">
-                <v-card outlined>
-                  <v-card-title>特徵重要性分析</v-card-title>
-                  <v-card-text>
-                    <canvas ref="featureImportanceChart" height="200"></canvas>
-                  </v-card-text>
+                <v-card outlined class="text-center pa-12">
+                  <v-icon size="80" color="grey-lighten-2">mdi-chart-timeline-variant</v-icon>
+                  <div class="text-h5 mt-4 text-grey-darken-1">選擇 TXO 合約並執行預測</div>
+                  <div class="text-body-2 text-grey mt-2">
+                    系統將分析歷史價格資料，預測明日可能的收盤價
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <!-- 載入狀態 -->
+            <v-row v-if="loading">
+              <v-col cols="12">
+                <v-card outlined class="text-center pa-12">
+                  <v-progress-circular
+                    indeterminate
+                    color="primary"
+                    size="64"
+                    width="6"
+                  ></v-progress-circular>
+                  <div class="text-h6 mt-4">正在分析歷史資料...</div>
+                  <div class="text-caption text-grey mt-2">
+                    使用 {{ getModelName(selectedModel) }} 模型預測明日收盤價（約需 30-60 秒）
+                  </div>
+                  <v-progress-linear
+                    indeterminate
+                    color="primary"
+                    class="mt-4"
+                  ></v-progress-linear>
                 </v-card>
               </v-col>
             </v-row>
@@ -203,255 +258,338 @@
       </v-col>
     </v-row>
 
-    <!-- 模型比較 -->
-    <v-row class="mt-4">
-      <v-col cols="12">
-        <v-card elevation="2">
-          <v-card-title>
-            <v-icon class="mr-2">mdi-compare</v-icon>
-            模型比較
-          </v-card-title>
-          <v-card-text>
-            <v-data-table
-              :headers="comparisonHeaders"
-              :items="modelComparison"
-              :items-per-page="10"
-              item-value="model"
-            >
-              <template v-slot:item.accuracy="{ item }">
-                <v-chip :color="getAccuracyColor(item.accuracy)" size="small">
-                  {{ item.accuracy }}%
-                </v-chip>
-              </template>
-
-              <template v-slot:item.speed="{ item }">
-                <v-rating
-                  :model-value="item.speed"
-                  color="yellow-darken-3"
-                  density="compact"
-                  size="small"
-                  readonly
-                ></v-rating>
-              </template>
-
-              <template v-slot:item.status="{ item }">
-                <v-chip :color="item.status === '已訓練' ? 'success' : 'grey'" size="small">
-                  {{ item.status }}
-                </v-chip>
-              </template>
-
-              <template v-slot:item.actions="{ item }">
-                <v-btn icon="mdi-play" size="small" variant="text" color="primary" @click="runModel(item)"></v-btn>
-                <v-btn icon="mdi-cog" size="small" variant="text" @click="configureModel(item)"></v-btn>
-              </template>
-            </v-data-table>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+    <!-- 模型參數調整對話框 -->
+    <v-dialog v-model="showParametersDialog" max-width="600">
+      <v-card>
+        <v-card-title>{{ getModelName(selectedModel) }} 模型參數</v-card-title>
+        <v-card-text>
+          <template v-if="selectedModel === 'lstm'">
+            <v-slider
+              v-model="modelParameters.lstm.epochs"
+              label="訓練輪數"
+              min="20"
+              max="200"
+              step="10"
+              thumb-label
+              :hint="`目前: ${modelParameters.lstm.epochs} 輪 (建議: 50-100)`"
+              persistent-hint
+              class="mb-4"
+            ></v-slider>
+            <v-slider
+              v-model="modelParameters.lstm.units"
+              label="神經元數量"
+              min="64"
+              max="256"
+              step="32"
+              thumb-label
+              :hint="`目前: ${modelParameters.lstm.units} (建議: 128)`"
+              persistent-hint
+            ></v-slider>
+          </template>
+          <template v-else-if="selectedModel === 'arima'">
+            <v-switch
+              v-model="modelParameters.arima.auto_select"
+              label="自動選擇最佳參數 (推薦)"
+              color="primary"
+              hint="系統會自動找出最適合的模型參數"
+              persistent-hint
+            ></v-switch>
+          </template>
+          <template v-else-if="selectedModel === 'garch'">
+            <v-text-field
+              v-model.number="modelParameters.garch.p"
+              label="GARCH 階數 (p)"
+              type="number"
+              min="1"
+              max="3"
+              hint="建議: 1"
+              persistent-hint
+            ></v-text-field>
+            <v-text-field
+              v-model.number="modelParameters.garch.q"
+              label="ARCH 階數 (q)"
+              type="number"
+              min="1"
+              max="3"
+              hint="建議: 1"
+              persistent-hint
+              class="mt-2"
+            ></v-text-field>
+          </template>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="showParametersDialog = false">確定</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import axios from 'axios'
 import Chart from 'chart.js/auto'
 
 export default {
   name: 'PredictionAnalysis',
   setup() {
-    // 狀態
-    const symbol = ref('2330')
-    const selectedModel = ref('LSTM')
-    const predictionDays = ref(10)
-    const trainingPeriod = ref(90)
-    const chartType = ref('line')
+    const loading = ref(false)
+    const loadingOptions = ref(false)
+    const predictionResult = ref(null)
+    const predictionChart = ref(null)
+    const showParametersDialog = ref(false)
+    const showChart = ref(false)
+    let chartInstance = null
 
-    const models = ['LSTM', 'ARIMA', 'GARCH', 'Prophet', 'Random Forest']
+    const selectedOption = ref(null)
+    const optionsList = ref([])
 
-    // 預測數據
-    const currentPrice = ref(595)
-    const predictedPrice = ref(612)
-    const accuracy = ref(85)
+    const selectedModel = ref('lstm')
+    const models = ref([
+      { text: 'LSTM', value: 'lstm' },
+      { text: 'ARIMA', value: 'arima' },
+      { text: 'GARCH', value: 'garch' }
+    ])
 
-    // 評估指標
-    const metrics = ref({
-      rmse: 8.23,
-      mape: 2.45,
-      mae: 6.78,
-      r2: 0.92
+    const trainingPeriod = ref(60)
+
+    const modelParameters = ref({
+      lstm: {
+        epochs: 100,
+        units: 128,
+        lookback: 60
+      },
+      arima: {
+        auto_select: true
+      },
+      garch: {
+        p: 1,
+        q: 1
+      }
     })
 
-    // 圖表參考
-    const predictionChart = ref(null)
-    const featureImportanceChart = ref(null)
-    let chartInstances = []
+    const currentPrice = computed(() => {
+      if (!predictionResult.value) return '---'
+      return predictionResult.value.current_price?.toFixed(2) || '---'
+    })
 
-    // 表格標題
-    const intervalHeaders = ref([
-      { title: '信賴區間', key: 'confidence' },
-      { title: '下界', key: 'lower' },
-      { title: '預測值', key: 'predicted' },
-      { title: '上界', key: 'upper' }
-    ])
+    const predictedPrice = computed(() => {
+      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
+      return predictionResult.value.predictions[0]?.predicted_price?.toFixed(2) || '---'
+    })
 
-    const predictionIntervals = ref([
-      { confidence: 99, lower: 585, predicted: 612, upper: 639 },
-      { confidence: 95, lower: 592, predicted: 612, upper: 632 },
-      { confidence: 90, lower: 596, predicted: 612, upper: 628 },
-      { confidence: 80, lower: 600, predicted: 612, upper: 624 },
-      { confidence: 68, lower: 604, predicted: 612, upper: 620 }
-    ])
+    const confidenceLower = computed(() => {
+      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
+      return predictionResult.value.predictions[0]?.confidence_lower?.toFixed(2) || '---'
+    })
 
-    const comparisonHeaders = ref([
-      { title: '模型', key: 'model' },
-      { title: '準確度', key: 'accuracy' },
-      { title: 'RMSE', key: 'rmse' },
-      { title: '訓練時間', key: 'trainingTime' },
-      { title: '速度', key: 'speed' },
-      { title: '狀態', key: 'status' },
-      { title: '操作', key: 'actions', sortable: false }
-    ])
+    const confidenceUpper = computed(() => {
+      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
+      return predictionResult.value.predictions[0]?.confidence_upper?.toFixed(2) || '---'
+    })
 
-    const modelComparison = ref([
-      { model: 'LSTM', accuracy: 85, rmse: 8.23, trainingTime: '15分鐘', speed: 3, status: '已訓練' },
-      { model: 'ARIMA', accuracy: 78, rmse: 12.45, trainingTime: '2分鐘', speed: 5, status: '已訓練' },
-      { model: 'GARCH', accuracy: 72, rmse: 15.67, trainingTime: '3分鐘', speed: 4, status: '已訓練' },
-      { model: 'Prophet', accuracy: 80, rmse: 10.89, trainingTime: '8分鐘', speed: 4, status: '已訓練' },
-      { model: 'Random Forest', accuracy: 76, rmse: 13.21, trainingTime: '5分鐘', speed: 4, status: '未訓練' }
-    ])
+    // 載入 TXO 選擇權列表（固定只查詢 TXO）
+    const loadOptions = async () => {
+      loadingOptions.value = true
+      try {
+        const response = await axios.get('/api/options', {
+          params: {
+            underlying: 'TXO',  // 固定只查詢 TXO
+            active_only: true,
+            per_page: 200  // 增加數量以顯示更多選項
+          }
+        })
 
-    // 計算屬性
+        if (response.data.success) {
+          optionsList.value = response.data.data.data.map(option => ({
+            id: option.id,
+            option_code: option.option_code,
+            option_type: option.option_type,
+            strike_price: option.strike_price,
+            expiry_date: option.expiry_date,
+            display_name: `${option.option_code} (${option.option_type === 'call' ? 'Call' : 'Put'} ${option.strike_price})`
+          }))
+        }
+      } catch (error) {
+        console.error('載入 TXO 選擇權列表失敗:', error)
+        alert('無法載入選擇權列表，請檢查 API 連線')
+      } finally {
+        loadingOptions.value = false
+      }
+    }
+
+    const runPrediction = async () => {
+      if (!selectedOption.value) {
+        alert('請選擇 TXO 合約')
+        return
+      }
+
+      loading.value = true
+      predictionResult.value = null
+
+      try {
+        const requestData = {
+          option_id: selectedOption.value,
+          model_type: selectedModel.value,
+          prediction_days: 1,  // 固定預測明日
+          parameters: {
+            historical_days: trainingPeriod.value,
+            ...modelParameters.value[selectedModel.value]
+          }
+        }
+
+        const response = await axios.post('/api/predictions/run', requestData)
+
+        if (response.data.success) {
+          predictionResult.value = response.data.data
+
+          if (showChart.value) {
+            setTimeout(() => {
+              updateChart()
+            }, 100)
+          }
+        } else {
+          alert('預測失敗: ' + (response.data.message || '未知錯誤'))
+        }
+      } catch (error) {
+        console.error('預測執行失敗:', error)
+        alert('預測失敗: ' + (error.response?.data?.message || error.message))
+      } finally {
+        loading.value = false
+      }
+    }
+
     const getPredictionChange = () => {
-      return (((predictedPrice.value - currentPrice.value) / currentPrice.value) * 100).toFixed(2)
+      if (!predictionResult.value || !predictionResult.value.current_price) return 0
+      const current = predictionResult.value.current_price
+      const predicted = parseFloat(predictedPrice.value)
+      if (isNaN(predicted) || current === 0) return 0
+      return ((predicted - current) / current * 100).toFixed(2)
     }
 
     const getPredictionColor = () => {
-      const change = getPredictionChange()
-      return change >= 0 ? 'success' : 'error'
+      const change = parseFloat(getPredictionChange())
+      if (change > 0) return 'success'
+      if (change < 0) return 'error'
+      return 'warning'
     }
 
-    const getAccuracyColor = (accuracy) => {
-      if (accuracy >= 80) return 'success'
-      if (accuracy >= 70) return 'warning'
-      return 'error'
+    const getModelColor = (model) => {
+      const colors = {
+        'lstm': 'primary',
+        'arima': 'success',
+        'garch': 'warning'
+      }
+      return colors[model] || 'grey'
     }
 
-    // 方法
-    const runPrediction = () => {
-      console.log('執行預測')
+    const getModelName = (model) => {
+      const names = {
+        'lstm': 'LSTM',
+        'arima': 'ARIMA',
+        'garch': 'GARCH'
+      }
+      return names[model] || model.toUpperCase()
     }
 
-    const runModel = (model) => {
-      console.log('執行模型:', model)
-    }
+    const updateChart = () => {
+      if (!predictionChart.value || !predictionResult.value) return
 
-    const configureModel = (model) => {
-      console.log('設定模型:', model)
-    }
+      if (chartInstance) {
+        chartInstance.destroy()
+      }
 
-    const initCharts = () => {
-      // Prediction Chart
-      if (predictionChart.value) {
-        const ctx = predictionChart.value.getContext('2d')
-        const chart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: Array.from({ length: 40 }, (_, i) => `Day ${i + 1}`),
-            datasets: [
-              {
-                label: '歷史價格',
-                data: Array.from({ length: 30 }, () => Math.random() * 50 + 570),
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                tension: 0.1
-              },
-              {
-                label: '預測價格',
-                data: Array.from({ length: 11 }, (_, i) => {
-                  if (i === 0) return null
-                  return 595 + (i * 1.7) + (Math.random() * 5 - 2.5)
-                }),
-                borderColor: 'rgb(255, 99, 132)',
-                backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                borderDash: [5, 5],
-                tension: 0.1
-              }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-              mode: 'index',
-              intersect: false
+      const ctx = predictionChart.value.getContext('2d')
+      const historicalData = predictionResult.value.historical_prices || []
+      const predictions = predictionResult.value.predictions || []
+
+      const historicalDates = historicalData.map(item => item.date || item.trade_date)
+      const historicalPrices = historicalData.map(item => item.close)
+      const predictionDates = predictions.map(item => item.target_date)
+      const predictionPrices = predictions.map(item => item.predicted_price)
+
+      const allDates = [...historicalDates, ...predictionDates]
+      const historicalFull = [...historicalPrices, ...new Array(predictions.length).fill(null)]
+      const predictionFull = [...new Array(historicalData.length).fill(null), ...predictionPrices]
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: allDates,
+          datasets: [
+            {
+              label: '歷史收盤價',
+              data: historicalFull,
+              borderColor: 'rgb(75, 192, 192)',
+              backgroundColor: 'rgba(75, 192, 192, 0.1)',
+              tension: 0.1,
+              pointRadius: 2
+            },
+            {
+              label: '預測收盤價',
+              data: predictionFull,
+              borderColor: 'rgb(255, 99, 132)',
+              backgroundColor: 'rgba(255, 99, 132, 0.1)',
+              borderDash: [5, 5],
+              tension: 0.1,
+              pointRadius: 4
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true
             }
           }
-        })
-        chartInstances.push(chart)
-      }
-
-      // Feature Importance Chart
-      if (featureImportanceChart.value) {
-        const ctx = featureImportanceChart.value.getContext('2d')
-        const chart = new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: ['收盤價', '成交量', '波動率', '技術指標', 'RSI', 'MACD', '外部因素'],
-            datasets: [{
-              label: '重要性分數',
-              data: [0.85, 0.72, 0.68, 0.55, 0.48, 0.42, 0.35],
-              backgroundColor: [
-                'rgba(255, 99, 132, 0.6)',
-                'rgba(54, 162, 235, 0.6)',
-                'rgba(255, 206, 86, 0.6)',
-                'rgba(75, 192, 192, 0.6)',
-                'rgba(153, 102, 255, 0.6)',
-                'rgba(255, 159, 64, 0.6)',
-                'rgba(199, 199, 199, 0.6)'
-              ]
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: 'y'
-          }
-        })
-        chartInstances.push(chart)
-      }
+        }
+      })
     }
 
+    watch(showChart, (newValue) => {
+      if (newValue && predictionResult.value) {
+        setTimeout(() => {
+          updateChart()
+        }, 100)
+      }
+    })
+
     onMounted(() => {
-      initCharts()
+      loadOptions()
     })
 
     onUnmounted(() => {
-      chartInstances.forEach(chart => chart.destroy())
+      if (chartInstance) {
+        chartInstance.destroy()
+      }
     })
 
     return {
-      symbol,
+      loading,
+      loadingOptions,
+      predictionResult,
+      predictionChart,
+      showParametersDialog,
+      showChart,
+      selectedOption,
+      optionsList,
       selectedModel,
-      predictionDays,
-      trainingPeriod,
-      chartType,
       models,
+      trainingPeriod,
+      modelParameters,
       currentPrice,
       predictedPrice,
-      accuracy,
-      metrics,
-      predictionChart,
-      featureImportanceChart,
-      intervalHeaders,
-      predictionIntervals,
-      comparisonHeaders,
-      modelComparison,
+      confidenceLower,
+      confidenceUpper,
+      loadOptions,
+      runPrediction,
       getPredictionChange,
       getPredictionColor,
-      getAccuracyColor,
-      runPrediction,
-      runModel,
-      configureModel
+      getModelColor,
+      getModelName
     }
   }
 }
@@ -460,5 +598,9 @@ export default {
 <style scoped>
 .prediction-page {
   padding: 16px;
+}
+
+.prediction-result-card {
+  border-left: 4px solid #1976d2;
 }
 </style>

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Services\VolatilityService;
@@ -28,7 +28,7 @@ class VolatilityController extends Controller
 
     /**
      * 計算歷史波動率 (Historical Volatility)
-     * 
+     *
      * GET /api/volatility/historical/{stockId}
      */
     public function historical(Request $request, int $stockId): JsonResponse
@@ -88,7 +88,6 @@ class VolatilityController extends Controller
                     'end_date' => $endDate ?: now()->format('Y-m-d'),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('歷史波動率計算錯誤', [
                 'stock_id' => $stockId,
@@ -105,7 +104,7 @@ class VolatilityController extends Controller
 
     /**
      * 計算選擇權隱含波動率
-     * 
+     *
      * GET /api/volatility/implied/{optionId}
      */
     public function implied(Request $request, int $optionId): JsonResponse
@@ -129,9 +128,9 @@ class VolatilityController extends Controller
 
             // 計算隱含波動率
             $iv = $this->volatilityService->calculateImpliedVolatilityForOption(  // ✅ 正確方法
-            $optionId,
-            $date,
-            $riskFreeRate
+                $optionId,
+                $date,
+                $riskFreeRate
             );
 
             if ($iv === null) {
@@ -161,7 +160,6 @@ class VolatilityController extends Controller
                     'date' => $date ?: now()->format('Y-m-d'),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('計算隱含波動率錯誤', [
                 'option_id' => $optionId,
@@ -178,7 +176,7 @@ class VolatilityController extends Controller
 
     /**
      * 計算波動率曲面 (Volatility Surface)
-     * 
+     *
      * GET /api/volatility/surface/{stockId}
      */
     public function surface(Request $request, int $stockId): JsonResponse
@@ -266,8 +264,8 @@ class VolatilityController extends Controller
                         'strike' => $strike,
                         'iv_call' => $iv['call'],
                         'iv_put' => $iv['put'],
-                        'iv_avg' => ($iv['call'] && $iv['put']) 
-                            ? ($iv['call'] + $iv['put']) / 2 
+                        'iv_avg' => ($iv['call'] && $iv['put'])
+                            ? ($iv['call'] + $iv['put']) / 2
                             : ($iv['call'] ?? $iv['put']),
                     ];
                 }
@@ -292,7 +290,6 @@ class VolatilityController extends Controller
                     'date' => $date,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('計算波動率曲面錯誤', [
                 'stock_id' => $stockId,
@@ -309,7 +306,7 @@ class VolatilityController extends Controller
 
     /**
      * 計算波動率錐 (Volatility Cone)
-     * 
+     *
      * GET /api/volatility/cone/{stockId}
      */
     public function cone(Request $request, int $stockId): JsonResponse
@@ -336,7 +333,7 @@ class VolatilityController extends Controller
 
             foreach ($periods as $period) {
                 $hvValues = [];
-                
+
                 // 計算過去 lookbackDays 天內，每天的 period 天 HV
                 for ($i = $period; $i < $lookbackDays; $i++) {
                     $date = now()->subDays($i)->format('Y-m-d');
@@ -345,7 +342,7 @@ class VolatilityController extends Controller
                         $period,
                         $date
                     );
-                    
+
                     if ($hv !== null) {
                         $hvValues[] = $hv;
                     }
@@ -354,7 +351,7 @@ class VolatilityController extends Controller
                 if (!empty($hvValues)) {
                     sort($hvValues);
                     $count = count($hvValues);
-                    
+
                     $coneData[] = [
                         'period' => $period,
                         'min' => round(min($hvValues), 4),
@@ -382,7 +379,6 @@ class VolatilityController extends Controller
                     'lookback_days' => $lookbackDays,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('計算波動率錐錯誤', [
                 'stock_id' => $stockId,
@@ -399,7 +395,7 @@ class VolatilityController extends Controller
 
     /**
      * 計算波動率偏斜 (Volatility Skew)
-     * 
+     *
      * GET /api/volatility/skew/{stockId}
      */
     public function skew(Request $request, int $stockId): JsonResponse
@@ -460,7 +456,6 @@ class VolatilityController extends Controller
                     'date' => $date,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('計算波動率偏斜錯誤', [
                 'stock_id' => $stockId,
@@ -477,7 +472,7 @@ class VolatilityController extends Controller
 
     /**
      * 使用 GARCH 模型預測波動率
-     * 
+     *
      * GET /api/volatility/garch/{stockId}
      */
     public function garch(Request $request, int $stockId): JsonResponse
@@ -518,8 +513,8 @@ class VolatilityController extends Controller
             // 計算對數收益率
             $returns = [];
             for ($i = 1; $i < $prices->count(); $i++) {
-                if ($prices[$i-1]->close > 0) {
-                    $returns[] = log($prices[$i]->close / $prices[$i-1]->close);
+                if ($prices[$i - 1]->close > 0) {
+                    $returns[] = log($prices[$i]->close / $prices[$i - 1]->close);
                 }
             }
 
@@ -542,11 +537,11 @@ class VolatilityController extends Controller
             // 預測未來波動率
             $forecasts = [];
             $lastCondVar = end($conditionalVariances);
-            
+
             for ($i = 1; $i <= $forecastDays; $i++) {
                 $forecastVar = $omega + ($alpha + $beta) * $lastCondVar;
                 $forecastVol = sqrt($forecastVar * 252);
-                
+
                 $forecasts[] = [
                     'day' => $i,
                     'date' => now()->addDays($i)->format('Y-m-d'),
@@ -582,7 +577,6 @@ class VolatilityController extends Controller
                 ],
                 'note' => '此為簡化版 GARCH 模型，建議使用專業統計軟體進行精確分析'
             ]);
-
         } catch (\Exception $e) {
             Log::error('GARCH 模型計算錯誤', [
                 'stock_id' => $stockId,
@@ -599,7 +593,7 @@ class VolatilityController extends Controller
 
     /**
      * 手動計算並儲存波動率
-     * 
+     *
      * POST /api/volatility/calculate
      */
     public function calculate(Request $request): JsonResponse
@@ -632,7 +626,6 @@ class VolatilityController extends Controller
                 'message' => '波動率計算完成',
                 'data' => $results
             ]);
-
         } catch (\Exception $e) {
             Log::error('波動率計算錯誤', [
                 'stock_id' => $request->input('stock_id'),

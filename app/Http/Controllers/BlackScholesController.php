@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Services\BlackScholesService;
@@ -26,7 +26,7 @@ class BlackScholesController extends Controller
 
     /**
      * 計算選擇權理論價格與 Greeks
-     * 
+     *
      * POST /api/black-scholes/calculate
      */
     public function calculate(Request $request): JsonResponse
@@ -131,7 +131,7 @@ class BlackScholesController extends Controller
 
     /**
      * 計算隱含波動率
-     * 
+     *
      * POST /api/black-scholes/implied-volatility
      */
     public function impliedVolatility(Request $request): JsonResponse
@@ -222,7 +222,7 @@ class BlackScholesController extends Controller
 
     /**
      * 批次計算選擇權鏈 (Option Chain)
-     * 
+     *
      * POST /api/black-scholes/option-chain
      */
     public function optionChain(Request $request): JsonResponse
@@ -313,7 +313,7 @@ class BlackScholesController extends Controller
     /**
      * 計算波動率微笑 (Volatility Smile)
      * 使用實際選擇權市場價格反推 IV
-     * 
+     *
      * POST /api/black-scholes/volatility-smile
      */
     public function volatilitySmile(Request $request): JsonResponse
@@ -364,7 +364,7 @@ class BlackScholesController extends Controller
 
             foreach ($options as $option) {
                 $price = $option->prices->first();
-                
+
                 if (!$price || !$price->implied_volatility) {
                     continue;
                 }
@@ -406,7 +406,7 @@ class BlackScholesController extends Controller
 
     /**
      * 批次計算多個選擇權的 Greeks
-     * 
+     *
      * POST /api/black-scholes/batch-greeks
      */
     public function batchGreeks(Request $request): JsonResponse
@@ -437,7 +437,7 @@ class BlackScholesController extends Controller
 
             foreach ($optionsInput as $optionInput) {
                 $option = Option::find($optionInput['option_id']);
-                
+
                 if (!$option) {
                     continue;
                 }

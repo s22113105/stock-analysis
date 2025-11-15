@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Prediction;
 use App\Models\Stock;
+use App\Models\Option;
 use App\Services\PredictionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -13,7 +14,7 @@ use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 
 /**
- * 預測模型 API 控制器（更新版）
+ * 預測模型 API 控制器（支援股票和選擇權）
  * 整合真實的 Python 機器學習模型
  */
 class PredictionController extends Controller
@@ -38,11 +39,16 @@ class PredictionController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Prediction::with('stock');
+        $query = Prediction::query();
 
-        // 股票篩選
-        if ($request->has('stock_id')) {
-            $query->where('stock_id', $request->input('stock_id'));
+        // 根據 predictable_type 篩選
+        if ($request->has('predictable_type')) {
+            $query->where('predictable_type', $request->input('predictable_type'));
+        }
+
+        // 根據 predictable_id 篩選
+        if ($request->has('predictable_id')) {
+            $query->where('predictable_id', $request->input('predictable_id'));
         }
 
         // 模型類型篩選
@@ -75,15 +81,17 @@ class PredictionController extends Controller
     }
 
     /**
-     * 執行預測
+     * 執行預測（支援股票和選擇權）
      *
      * POST /api/predictions/run
      */
     public function run(Request $request): JsonResponse
     {
+        // 驗證規則
         $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'model_type' => 'required|in:lstm,arima,garch,monte_carlo',
+            'stock_symbol' => 'required_without:option_id|string',
+            'option_id' => 'required_without:stock_symbol|integer|exists:options,id',
+            'model_type' => 'required|in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',
             'parameters' => 'nullable|array',
         ]);
@@ -97,43 +105,105 @@ class PredictionController extends Controller
         }
 
         try {
-            $stockId = $request->input('stock_id');
             $modelType = $request->input('model_type');
-            $predictionDays = $request->input('prediction_days', 7);
+            $predictionDays = $request->input('prediction_days', 1);
             $parameters = $request->input('parameters', []);
 
-            $stock = Stock::findOrFail($stockId);
+            // 判斷預測標的類型
+            if ($request->has('option_id')) {
+                // 選擇權預測
+                $option = Option::with('latestPrice')->findOrFail($request->input('option_id'));
 
-            // 根據不同模型執行預測
-            $result = match ($modelType) {
-                'lstm' => $this->predictionService->runLSTMPrediction($stock, $predictionDays, $parameters),
-                'arima' => $this->predictionService->runARIMAPrediction($stock, $predictionDays, $parameters),
-                'garch' => $this->predictionService->runGARCHPrediction($stock, $predictionDays, $parameters),
-                'monte_carlo' => $this->predictionService->runMonteCarloSimulation($stock, $predictionDays, $parameters),
-            };
+                Log::info('開始選擇權預測', [
+                    'option_id' => $option->id,
+                    'option_code' => $option->option_code,
+                    'model_type' => $modelType
+                ]);
 
-            if (!$result['success']) {
-                return response()->json($result, 400);
+                // 根據不同模型執行選擇權預測
+                $result = match ($modelType) {
+                    'lstm' => $this->predictionService->runOptionLSTMPrediction($option, $predictionDays, $parameters),
+                    'arima' => $this->predictionService->runOptionARIMAPrediction($option, $predictionDays, $parameters),
+                    'garch' => $this->predictionService->runOptionGARCHPrediction($option, $predictionDays, $parameters),
+                };
+
+                if (!$result['success']) {
+                    return response()->json($result, 400);
+                }
+
+                // 取得當前價格
+                $latestPrice = $option->latestPrice;
+                $currentPrice = $latestPrice ? $latestPrice->close : null;
+
+                return response()->json([
+                    'success' => true,
+                    'message' => '預測完成',
+                    'data' => [
+                        'target_info' => [
+                            'type' => 'option',
+                            'id' => $option->id,
+                            'option_code' => $option->option_code,
+                            'option_type' => $option->option_type,
+                            'strike_price' => $option->strike_price,
+                            'expiry_date' => $option->expiry_date,
+                        ],
+                        'current_price' => $currentPrice,
+                        'current_date' => $latestPrice ? $latestPrice->trade_date : null,
+                        'model_type' => $modelType,
+                        'predictions' => $result['predictions'],
+                        'historical_prices' => $result['historical_prices'] ?? [],
+                        'metrics' => $result['metrics'] ?? null,
+                        'model_info' => $result['model_info'] ?? null,
+                    ]
+                ]);
+
+            } else {
+                // 股票預測
+                $stock = Stock::where('symbol', $request->input('stock_symbol'))->firstOrFail();
+
+                Log::info('開始股票預測', [
+                    'stock_id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'model_type' => $modelType
+                ]);
+
+                // 根據不同模型執行股票預測
+                $result = match ($modelType) {
+                    'lstm' => $this->predictionService->runLSTMPrediction($stock, $predictionDays, $parameters),
+                    'arima' => $this->predictionService->runARIMAPrediction($stock, $predictionDays, $parameters),
+                    'garch' => $this->predictionService->runGARCHPrediction($stock, $predictionDays, $parameters),
+                };
+
+                if (!$result['success']) {
+                    return response()->json($result, 400);
+                }
+
+                // 取得當前價格
+                $latestPrice = $stock->latestPrice;
+                $currentPrice = $latestPrice ? $latestPrice->close : null;
+
+                return response()->json([
+                    'success' => true,
+                    'message' => '預測完成',
+                    'data' => [
+                        'target_info' => [
+                            'type' => 'stock',
+                            'id' => $stock->id,
+                            'symbol' => $stock->symbol,
+                            'name' => $stock->name,
+                        ],
+                        'current_price' => $currentPrice,
+                        'current_date' => $latestPrice ? $latestPrice->trade_date : null,
+                        'model_type' => $modelType,
+                        'predictions' => $result['predictions'],
+                        'historical_prices' => $result['historical_prices'] ?? [],
+                        'metrics' => $result['metrics'] ?? null,
+                        'model_info' => $result['model_info'] ?? null,
+                    ]
+                ]);
             }
-
-            return response()->json([
-                'success' => true,
-                'message' => '預測完成',
-                'data' => [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
-                    'model_type' => $modelType,
-                    'predictions' => $result['predictions'],
-                    'metrics' => $result['metrics'] ?? null,
-                    'model_info' => $result['model_info'] ?? null,
-                ]
-            ]);
         } catch (\Exception $e) {
             Log::error('預測執行錯誤', [
-                'stock_id' => $request->input('stock_id'),
                 'model_type' => $request->input('model_type'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -147,151 +217,50 @@ class PredictionController extends Controller
     }
 
     /**
-     * LSTM 預測
+     * LSTM 預測（快捷路由）
      *
      * POST /api/predictions/lstm
      */
     public function lstm(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'prediction_days' => 'nullable|integer|min:1|max:30',
-            'epochs' => 'nullable|integer|min:10|max:1000',
-            'units' => 'nullable|integer|min:16|max:512',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $request->merge([
-            'model_type' => 'lstm',
-            'parameters' => [
-                'epochs' => $request->input('epochs', 100),
-                'units' => $request->input('units', 128),
-            ]
-        ]);
-
+        $request->merge(['model_type' => 'lstm']);
         return $this->run($request);
     }
 
     /**
-     * ARIMA 預測
+     * ARIMA 預測（快捷路由）
      *
      * POST /api/predictions/arima
      */
     public function arima(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'prediction_days' => 'nullable|integer|min:1|max:30',
-            'p' => 'nullable|integer|min:0|max:5',
-            'd' => 'nullable|integer|min:0|max:2',
-            'q' => 'nullable|integer|min:0|max:5',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $request->merge([
-            'model_type' => 'arima',
-            'parameters' => [
-                'p' => $request->input('p', null),
-                'd' => $request->input('d', null),
-                'q' => $request->input('q', null),
-                'auto_select' => true,
-            ]
-        ]);
-
+        $request->merge(['model_type' => 'arima']);
         return $this->run($request);
     }
 
     /**
-     * GARCH 波動率預測
+     * GARCH 預測（快捷路由）
      *
      * POST /api/predictions/garch
      */
     public function garch(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'prediction_days' => 'nullable|integer|min:1|max:30',
-            'p' => 'nullable|integer|min:1|max:3',
-            'q' => 'nullable|integer|min:1|max:3',
-            'dist' => 'nullable|in:normal,t,skewt',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $request->merge([
-            'model_type' => 'garch',
-            'parameters' => [
-                'p' => $request->input('p', 1),
-                'q' => $request->input('q', 1),
-                'dist' => $request->input('dist', 'normal'),
-            ]
-        ]);
-
+        $request->merge(['model_type' => 'garch']);
         return $this->run($request);
     }
 
     /**
-     * Monte Carlo 模擬預測
-     *
-     * POST /api/predictions/monte-carlo
-     */
-    public function monteCarlo(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'prediction_days' => 'nullable|integer|min:1|max:30',
-            'simulations' => 'nullable|integer|min:100|max:10000',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $request->merge([
-            'model_type' => 'monte_carlo',
-            'parameters' => [
-                'simulations' => $request->input('simulations', 1000),
-            ]
-        ]);
-
-        return $this->run($request);
-    }
-
-    /**
-     * 比較多個模型的預測結果
+     * 比較多個模型
      *
      * POST /api/predictions/compare
      */
     public function compare(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'stock_id' => 'required|integer|exists:stocks,id',
-            'models' => 'required|array|min:2',
-            'models.*' => 'in:lstm,arima,garch,monte_carlo',
+            'stock_symbol' => 'required_without:option_id|string',
+            'option_id' => 'required_without:stock_symbol|integer|exists:options,id',
+            'models' => 'required|array',
+            'models.*' => 'in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',
         ]);
 
@@ -304,26 +273,37 @@ class PredictionController extends Controller
         }
 
         try {
-            $stock = Stock::findOrFail($request->input('stock_id'));
             $models = $request->input('models');
             $predictionDays = $request->input('prediction_days', 7);
+            $results = [];
 
-            $results = $this->predictionService->compareModels($stock, $models, $predictionDays);
+            foreach ($models as $modelType) {
+                try {
+                    $request->merge(['model_type' => $modelType]);
+                    $response = $this->run($request);
+                    $responseData = json_decode($response->getContent(), true);
 
-            // 準備比較圖表資料
-            $chartData = $this->prepareComparisonChartData($results);
+                    if ($responseData['success']) {
+                        $results[$modelType] = $responseData['data'];
+                    } else {
+                        $results[$modelType] = [
+                            'success' => false,
+                            'error' => $responseData['message']
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    $results[$modelType] = [
+                        'success' => false,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => '模型比較完成',
                 'data' => [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
                     'results' => $results,
-                    'chart_data' => $chartData,
                     'comparison_date' => now()->format('Y-m-d H:i:s'),
                 ]
             ]);
@@ -346,7 +326,7 @@ class PredictionController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $prediction = Prediction::with('stock')->findOrFail($id);
+        $prediction = Prediction::with('predictable')->findOrFail($id);
 
         return response()->json([
             'success' => true,
@@ -380,57 +360,5 @@ class PredictionController extends Controller
                 'message' => '刪除失敗: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    /**
-     * 準備比較圖表資料
-     *
-     * @param array $results
-     * @return array
-     */
-    private function prepareComparisonChartData(array $results): array
-    {
-        $chartData = [
-            'labels' => [],
-            'datasets' => []
-        ];
-
-        // 取得所有日期標籤
-        foreach ($results as $modelType => $result) {
-            if ($result['success'] && isset($result['predictions'])) {
-                $chartData['labels'] = array_column($result['predictions'], 'target_date');
-                break;
-            }
-        }
-
-        // 準備各模型的資料集
-        $colors = [
-            'lstm' => 'rgb(75, 192, 192)',
-            'arima' => 'rgb(255, 99, 132)',
-            'garch' => 'rgb(54, 162, 235)',
-            'monte_carlo' => 'rgb(255, 206, 86)',
-        ];
-
-        foreach ($results as $modelType => $result) {
-            if ($result['success'] && isset($result['predictions'])) {
-                $dataset = [
-                    'label' => strtoupper($modelType),
-                    'data' => array_column($result['predictions'], 'predicted_price'),
-                    'borderColor' => $colors[$modelType] ?? 'rgb(201, 203, 207)',
-                    'backgroundColor' => 'transparent',
-                    'tension' => 0.1
-                ];
-
-                // 加入信賴區間
-                if (isset($result['predictions'][0]['confidence_upper'])) {
-                    $dataset['upper'] = array_column($result['predictions'], 'confidence_upper');
-                    $dataset['lower'] = array_column($result['predictions'], 'confidence_lower');
-                }
-
-                $chartData['datasets'][] = $dataset;
-            }
-        }
-
-        return $chartData;
     }
 }

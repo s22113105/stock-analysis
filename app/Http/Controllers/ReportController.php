@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Stock;
@@ -19,14 +19,14 @@ use Carbon\Carbon;
 
 /**
  * 報表生成 API 控制器
- * 
+ *
  * 處理日報、月報、績效報告等功能
  */
 class ReportController extends Controller
 {
     /**
      * 取得每日報表
-     * 
+     *
      * GET /api/reports/daily
      */
     public function daily(Request $request): JsonResponse
@@ -127,7 +127,6 @@ class ReportController extends Controller
                     'generated_at' => now()->toIso8601String(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('生成每日報表失敗', [
                 'error' => $e->getMessage(),
@@ -143,7 +142,7 @@ class ReportController extends Controller
 
     /**
      * 取得月報
-     * 
+     *
      * GET /api/reports/monthly
      */
     public function monthly(Request $request): JsonResponse
@@ -164,7 +163,7 @@ class ReportController extends Controller
         try {
             $year = $request->input('year', now()->year);
             $month = $request->input('month', now()->month);
-            
+
             $startDate = Carbon::create($year, $month, 1)->startOfMonth();
             $endDate = Carbon::create($year, $month, 1)->endOfMonth();
 
@@ -190,8 +189,8 @@ class ReportController extends Controller
             $topPerformers = DB::table('stock_prices as sp1')
                 ->join('stock_prices as sp2', function ($join) use ($startDate, $endDate) {
                     $join->on('sp1.stock_id', '=', 'sp2.stock_id')
-                         ->where('sp1.trade_date', '=', $startDate->format('Y-m-d'))
-                         ->where('sp2.trade_date', '=', $endDate->format('Y-m-d'));
+                        ->where('sp1.trade_date', '=', $startDate->format('Y-m-d'))
+                        ->where('sp2.trade_date', '=', $endDate->format('Y-m-d'));
                 })
                 ->join('stocks', 'sp1.stock_id', '=', 'stocks.id')
                 ->select(
@@ -210,28 +209,28 @@ class ReportController extends Controller
                 $startDate->format('Y-m-d'),
                 $endDate->format('Y-m-d')
             ])
-            ->select(
-                'model_type',
-                DB::raw('COUNT(*) as total_predictions'),
-                DB::raw('AVG(accuracy) as avg_accuracy')
-            )
-            ->groupBy('model_type')
-            ->get();
+                ->select(
+                    'model_type',
+                    DB::raw('COUNT(*) as total_predictions'),
+                    DB::raw('AVG(accuracy) as avg_accuracy')
+                )
+                ->groupBy('model_type')
+                ->get();
 
             // 回測統計
             $backtestStats = BacktestResult::whereBetween('created_at', [
                 $startDate,
                 $endDate
             ])
-            ->select(
-                'strategy_name',
-                DB::raw('COUNT(*) as total_backtests'),
-                DB::raw('AVG(total_return) as avg_return'),
-                DB::raw('AVG(sharpe_ratio) as avg_sharpe'),
-                DB::raw('AVG(max_drawdown) as avg_drawdown')
-            )
-            ->groupBy('strategy_name')
-            ->get();
+                ->select(
+                    'strategy_name',
+                    DB::raw('COUNT(*) as total_backtests'),
+                    DB::raw('AVG(total_return) as avg_return'),
+                    DB::raw('AVG(sharpe_ratio) as avg_sharpe'),
+                    DB::raw('AVG(max_drawdown) as avg_drawdown')
+                )
+                ->groupBy('strategy_name')
+                ->get();
 
             return response()->json([
                 'success' => true,
@@ -247,7 +246,6 @@ class ReportController extends Controller
                     'generated_at' => now()->toIso8601String(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('生成月報失敗', [
                 'error' => $e->getMessage(),
@@ -263,7 +261,7 @@ class ReportController extends Controller
 
     /**
      * 取得績效報告
-     * 
+     *
      * GET /api/reports/performance
      */
     public function performance(Request $request): JsonResponse
@@ -311,7 +309,7 @@ class ReportController extends Controller
             // 計算日收益率
             $returns = [];
             for ($i = 1; $i < $prices->count(); $i++) {
-                $returns[] = log($prices[$i]->close / $prices[$i-1]->close);
+                $returns[] = log($prices[$i]->close / $prices[$i - 1]->close);
             }
 
             // 年化報酬率
@@ -379,7 +377,6 @@ class ReportController extends Controller
                 'success' => true,
                 'data' => $performance
             ]);
-
         } catch (\Exception $e) {
             Log::error('生成績效報告失敗', [
                 'error' => $e->getMessage(),
@@ -395,7 +392,7 @@ class ReportController extends Controller
 
     /**
      * 取得風險報告
-     * 
+     *
      * GET /api/reports/risk
      */
     public function risk(Request $request): JsonResponse
@@ -436,7 +433,7 @@ class ReportController extends Controller
                 $weight = $position['weight'];
 
                 $stock = Stock::findOrFail($stockId);
-                
+
                 // 取得歷史價格
                 $prices = StockPrice::where('stock_id', $stockId)
                     ->where('trade_date', '>=', $startDate)
@@ -450,7 +447,7 @@ class ReportController extends Controller
                 // 計算收益率
                 $returns = [];
                 for ($i = 1; $i < $prices->count(); $i++) {
-                    $returns[] = log($prices[$i]->close / $prices[$i-1]->close);
+                    $returns[] = log($prices[$i]->close / $prices[$i - 1]->close);
                 }
 
                 // 計算波動率
@@ -497,7 +494,6 @@ class ReportController extends Controller
                     'generated_at' => now()->toIso8601String(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('生成風險報告失敗', [
                 'error' => $e->getMessage(),
@@ -513,7 +509,7 @@ class ReportController extends Controller
 
     /**
      * 生成自訂報表
-     * 
+     *
      * POST /api/reports/generate
      */
     public function generate(Request $request): JsonResponse
@@ -549,7 +545,6 @@ class ReportController extends Controller
                 'message' => '報表生成成功',
                 'data' => $reportData->getData()
             ]);
-
         } catch (\Exception $e) {
             Log::error('生成報表失敗', [
                 'error' => $e->getMessage(),
@@ -565,7 +560,7 @@ class ReportController extends Controller
 
     /**
      * 匯出報表
-     * 
+     *
      * GET /api/reports/export/{type}
      */
     public function export(Request $request, string $type): JsonResponse
@@ -597,7 +592,6 @@ class ReportController extends Controller
                     'note' => '請安裝 maatwebsite/excel 或 barryvdh/laravel-dompdf 套件以啟用此功能'
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('匯出報表失敗', [
                 'error' => $e->getMessage()

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Stock;
@@ -14,7 +14,7 @@ use Carbon\Carbon;
 
 /**
  * 交易管理 API 控制器
- * 
+ *
  * 處理持倉、訂單等交易相關功能
  * 注意：此為模擬交易系統，實際交易請對接券商 API
  */
@@ -22,7 +22,7 @@ class TradingController extends Controller
 {
     /**
      * 取得持倉列表
-     * 
+     *
      * GET /api/trading/positions
      */
     public function positions(Request $request): JsonResponse
@@ -98,7 +98,7 @@ class TradingController extends Controller
 
     /**
      * 取得訂單列表
-     * 
+     *
      * GET /api/trading/orders
      */
     public function orders(Request $request): JsonResponse
@@ -209,7 +209,7 @@ class TradingController extends Controller
 
     /**
      * 建立訂單
-     * 
+     *
      * POST /api/trading/orders
      */
     public function createOrder(Request $request): JsonResponse
@@ -232,11 +232,11 @@ class TradingController extends Controller
 
         try {
             $userId = $request->user()->id ?? 1;
-            
+
             // 驗證股票/選擇權存在
             $symbol = $request->input('symbol');
             $asset = Stock::where('symbol', $symbol)->first();
-            
+
             if (!$asset) {
                 $asset = Option::where('option_code', $symbol)->first();
             }
@@ -284,7 +284,7 @@ class TradingController extends Controller
 
     /**
      * 取消訂單
-     * 
+     *
      * DELETE /api/trading/orders/{id}
      */
     public function cancelOrder(Request $request, int $id): JsonResponse
@@ -324,7 +324,7 @@ class TradingController extends Controller
 
     /**
      * 取得帳戶資訊
-     * 
+     *
      * GET /api/trading/account
      */
     public function account(Request $request): JsonResponse
@@ -363,7 +363,7 @@ class TradingController extends Controller
 
     /**
      * 取得交易歷史
-     * 
+     *
      * GET /api/trading/history
      */
     public function history(Request $request): JsonResponse
@@ -455,7 +455,7 @@ class TradingController extends Controller
 
     /**
      * 計算手續費和稅金
-     * 
+     *
      * POST /api/trading/calculate-fees
      */
     public function calculateFees(Request $request): JsonResponse
@@ -479,7 +479,7 @@ class TradingController extends Controller
             $orderType = $request->input('order_type');
             $quantity = $request->input('quantity');
             $price = $request->input('price');
-            
+
             $amount = $quantity * $price;
 
             // 手續費 (0.1425% 打折後)
@@ -491,8 +491,8 @@ class TradingController extends Controller
             $tax = $amount * $taxRate;
 
             $totalFees = $commission + $tax;
-            $netAmount = $orderType === 'buy' 
-                ? $amount + $totalFees 
+            $netAmount = $orderType === 'buy'
+                ? $amount + $totalFees
                 : $amount - $totalFees;
 
             return response()->json([

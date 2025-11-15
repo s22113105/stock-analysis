@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Option;
@@ -20,7 +20,7 @@ class OptionController extends Controller
 {
     /**
      * 取得選擇權列表
-     * 
+     *
      * GET /api/options
      */
     public function index(Request $request): JsonResponse
@@ -78,7 +78,7 @@ class OptionController extends Controller
 
     /**
      * 取得單一選擇權詳情
-     * 
+     *
      * GET /api/options/{id}
      */
     public function show(int $id): JsonResponse
@@ -95,13 +95,13 @@ class OptionController extends Controller
 
     /**
      * 取得選擇權鏈 (Option Chain)
-     * 
+     *
      * GET /api/options/chain/{stockId}
      */
     public function chain(Request $request, int $stockId): JsonResponse
     {
         $stock = Stock::findOrFail($stockId);
-        
+
         $validator = Validator::make($request->all(), [
             'expiry_date' => 'nullable|date',
             'option_type' => 'nullable|in:call,put,both',
@@ -128,7 +128,7 @@ class OptionController extends Controller
                     ->where('is_active', true)
                     ->where('expiry_date', '>=', now()->format('Y-m-d'))
                     ->min('expiry_date');
-                
+
                 if ($nearestExpiry) {
                     $query->where('expiry_date', $nearestExpiry);
                 }
@@ -152,7 +152,7 @@ class OptionController extends Controller
                 $callOption = $options->where('strike_price', $strike)
                     ->where('option_type', 'call')
                     ->first();
-                
+
                 $putOption = $options->where('strike_price', $strike)
                     ->where('option_type', 'put')
                     ->first();
@@ -191,7 +191,6 @@ class OptionController extends Controller
                     'expiry_date' => $options->first()?->expiry_date,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('取得選擇權鏈失敗', [
                 'stock_id' => $stockId,
@@ -207,7 +206,7 @@ class OptionController extends Controller
 
     /**
      * 取得選擇權價格歷史
-     * 
+     *
      * GET /api/options/{id}/prices
      */
     public function prices(Request $request, int $id): JsonResponse
@@ -228,7 +227,7 @@ class OptionController extends Controller
 
         try {
             $option = Option::findOrFail($id);
-            
+
             $query = OptionPrice::where('option_id', $id);
 
             // 根據 period 參數設定日期範圍
@@ -279,7 +278,7 @@ class OptionController extends Controller
 
     /**
      * 即將到期的選擇權
-     * 
+     *
      * GET /api/options/expiring
      */
     public function expiring(Request $request): JsonResponse
@@ -353,7 +352,7 @@ class OptionController extends Controller
 
     /**
      * 進階篩選選擇權
-     * 
+     *
      * POST /api/options/filter
      */
     public function filter(Request $request): JsonResponse
@@ -418,27 +417,27 @@ class OptionController extends Controller
             if ($request->has('moneyness') && $request->has('underlying')) {
                 $moneyness = $request->input('moneyness');
                 $underlying = $request->input('underlying');
-                
+
                 // 取得標的最新價格
                 $stock = Stock::where('symbol', $underlying)->first();
                 if ($stock && $stock->latestPrice) {
                     $spotPrice = $stock->latestPrice->close;
-                    
+
                     switch ($moneyness) {
                         case 'ITM': // In the Money
                             $query->where(function ($q) use ($spotPrice) {
                                 $q->where(function ($q2) use ($spotPrice) {
                                     // Call ITM: 履約價 < 現價
                                     $q2->where('option_type', 'call')
-                                       ->where('strike_price', '<', $spotPrice);
+                                        ->where('strike_price', '<', $spotPrice);
                                 })->orWhere(function ($q2) use ($spotPrice) {
                                     // Put ITM: 履約價 > 現價
                                     $q2->where('option_type', 'put')
-                                       ->where('strike_price', '>', $spotPrice);
+                                        ->where('strike_price', '>', $spotPrice);
                                 });
                             });
                             break;
-                        
+
                         case 'ATM': // At the Money (現價 ± 5%)
                             $range = $spotPrice * 0.05;
                             $query->whereBetween('strike_price', [
@@ -446,17 +445,17 @@ class OptionController extends Controller
                                 $spotPrice + $range
                             ]);
                             break;
-                        
+
                         case 'OTM': // Out of the Money
                             $query->where(function ($q) use ($spotPrice) {
                                 $q->where(function ($q2) use ($spotPrice) {
                                     // Call OTM: 履約價 > 現價
                                     $q2->where('option_type', 'call')
-                                       ->where('strike_price', '>', $spotPrice);
+                                        ->where('strike_price', '>', $spotPrice);
                                 })->orWhere(function ($q2) use ($spotPrice) {
                                     // Put OTM: 履約價 < 現價
                                     $q2->where('option_type', 'put')
-                                       ->where('strike_price', '<', $spotPrice);
+                                        ->where('strike_price', '<', $spotPrice);
                                 });
                             });
                             break;
@@ -502,7 +501,7 @@ class OptionController extends Controller
                 // 如果排序欄位在 latestPrice 關聯中
                 $query->leftJoin('option_prices as latest', function ($join) {
                     $join->on('options.id', '=', 'latest.option_id')
-                         ->whereRaw('latest.trade_date = (SELECT MAX(trade_date) FROM option_prices WHERE option_id = options.id)');
+                        ->whereRaw('latest.trade_date = (SELECT MAX(trade_date) FROM option_prices WHERE option_id = options.id)');
                 })->orderBy('latest.' . $sortBy, $sortOrder);
             } else {
                 $query->orderBy($sortBy, $sortOrder);
@@ -516,10 +515,17 @@ class OptionController extends Controller
                 'success' => true,
                 'data' => $options,
                 'filters_applied' => array_filter($request->only([
-                    'underlying', 'option_type', 'expiry_date_from', 'expiry_date_to',
-                    'strike_price_min', 'strike_price_max', 'moneyness',
-                    'volume_min', 'open_interest_min',
-                    'implied_volatility_min', 'implied_volatility_max'
+                    'underlying',
+                    'option_type',
+                    'expiry_date_from',
+                    'expiry_date_to',
+                    'strike_price_min',
+                    'strike_price_max',
+                    'moneyness',
+                    'volume_min',
+                    'open_interest_min',
+                    'implied_volatility_min',
+                    'implied_volatility_max'
                 ])),
             ]);
         } catch (\Exception $e) {

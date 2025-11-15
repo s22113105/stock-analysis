@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Stock;
@@ -17,14 +17,14 @@ use Carbon\Carbon;
 
 /**
  * 即時資料 API 控制器
- * 
+ *
  * 處理即時報價、市場深度、成交明細等功能
  */
 class RealtimeController extends Controller
 {
     /**
      * 取得即時報價
-     * 
+     *
      * GET /api/realtime/quotes
      */
     public function quotes(Request $request): JsonResponse
@@ -59,7 +59,7 @@ class RealtimeController extends Controller
                         $stock = Stock::where('symbol', $symbol)
                             ->with('latestPrice')
                             ->first();
-                        
+
                         if ($stock && $stock->latestPrice) {
                             $quote = [
                                 'symbol' => $stock->symbol,
@@ -79,7 +79,7 @@ class RealtimeController extends Controller
                         $option = Option::where('option_code', $symbol)
                             ->with('latestPrice')
                             ->first();
-                        
+
                         if ($option && $option->latestPrice) {
                             $quote = [
                                 'option_code' => $option->option_code,
@@ -116,7 +116,6 @@ class RealtimeController extends Controller
                 'data' => $quotes,
                 'timestamp' => now()->toIso8601String(),
             ]);
-
         } catch (\Exception $e) {
             Log::error('取得即時報價失敗', [
                 'error' => $e->getMessage(),
@@ -132,7 +131,7 @@ class RealtimeController extends Controller
 
     /**
      * 取得市場深度 (買賣五檔)
-     * 
+     *
      * GET /api/realtime/depth/{symbol}
      */
     public function depth(Request $request, string $symbol): JsonResponse
@@ -145,7 +144,7 @@ class RealtimeController extends Controller
             if (!$depth) {
                 // 模擬市場深度資料 (實際應該從即時資料源取得)
                 $stock = Stock::where('symbol', $symbol)->first();
-                
+
                 if (!$stock || !$stock->latestPrice) {
                     return response()->json([
                         'success' => false,
@@ -154,7 +153,7 @@ class RealtimeController extends Controller
                 }
 
                 $currentPrice = $stock->latestPrice->close;
-                
+
                 // 生成模擬的買賣五檔
                 $depth = [
                     'symbol' => $symbol,
@@ -173,7 +172,6 @@ class RealtimeController extends Controller
                 'success' => true,
                 'data' => $depth
             ]);
-
         } catch (\Exception $e) {
             Log::error('取得市場深度失敗', [
                 'symbol' => $symbol,
@@ -189,7 +187,7 @@ class RealtimeController extends Controller
 
     /**
      * 取得成交明細
-     * 
+     *
      * GET /api/realtime/trades/{symbol}
      */
     public function trades(Request $request, string $symbol): JsonResponse
@@ -216,7 +214,7 @@ class RealtimeController extends Controller
             if (!$trades) {
                 // 模擬成交明細 (實際應該從即時資料源取得)
                 $stock = Stock::where('symbol', $symbol)->first();
-                
+
                 if (!$stock || !$stock->latestPrice) {
                     return response()->json([
                         'success' => false,
@@ -239,7 +237,6 @@ class RealtimeController extends Controller
                     'timestamp' => now()->toIso8601String(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('取得成交明細失敗', [
                 'symbol' => $symbol,
@@ -255,7 +252,7 @@ class RealtimeController extends Controller
 
     /**
      * 訂閱即時資料
-     * 
+     *
      * POST /api/realtime/subscribe
      */
     public function subscribe(Request $request): JsonResponse
@@ -299,7 +296,6 @@ class RealtimeController extends Controller
                     'user_id' => $userId,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('訂閱失敗', [
                 'error' => $e->getMessage()
@@ -314,7 +310,7 @@ class RealtimeController extends Controller
 
     /**
      * 取消訂閱
-     * 
+     *
      * POST /api/realtime/unsubscribe
      */
     public function unsubscribe(Request $request): JsonResponse
@@ -352,7 +348,6 @@ class RealtimeController extends Controller
                     'symbols' => $symbols,
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('取消訂閱失敗', [
                 'error' => $e->getMessage()
@@ -401,7 +396,7 @@ class RealtimeController extends Controller
         for ($i = 0; $i < $count; $i++) {
             $priceVariation = $currentPrice * 0.002; // ±0.2% 變動
             $price = $currentPrice + (rand(-100, 100) / 100 * $priceVariation);
-            
+
             $trades[] = [
                 'price' => round($price, 2),
                 'volume' => rand(1, 100) * 100,
