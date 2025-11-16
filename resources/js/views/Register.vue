@@ -1,20 +1,32 @@
 <template>
   <v-app>
     <v-main>
-      <v-container fluid class="fill-height login-container">
+      <v-container fluid class="fill-height register-container">
         <v-row align="center" justify="center">
-          <v-col cols="12" sm="8" md="4">
+          <v-col cols="12" sm="8" md="5">
             <!-- Logo & Title -->
             <div class="text-center mb-8">
               <v-icon size="80" color="primary">mdi-chart-line</v-icon>
-              <h1 class="text-h4 mt-4 font-weight-bold">Stock_Analysis</h1>
-              <p class="text-subtitle-1 text-grey">台股選擇權交易分析系統</p>
+              <h1 class="text-h4 mt-4 font-weight-bold">建立新帳號</h1>
+              <p class="text-subtitle-1 text-grey">開始使用 Stock_Analysis 系統</p>
             </div>
 
-            <!-- Login Card -->
+            <!-- Register Card -->
             <v-card elevation="8" rounded="lg">
               <v-card-text class="pa-8">
-                <v-form @submit.prevent="handleLogin" ref="loginForm">
+                <v-form @submit.prevent="handleRegister" ref="registerForm">
+                  <!-- Name -->
+                  <v-text-field
+                    v-model="name"
+                    label="姓名"
+                    prepend-inner-icon="mdi-account"
+                    variant="outlined"
+                    :rules="nameRules"
+                    :error-messages="errors.name"
+                    class="mb-4"
+                    @input="errors.name = []"
+                  ></v-text-field>
+
                   <!-- Email -->
                   <v-text-field
                     v-model="email"
@@ -31,7 +43,7 @@
                   <!-- Password -->
                   <v-text-field
                     v-model="password"
-                    :label="'密碼'"
+                    label="密碼"
                     :type="showPassword ? 'text' : 'password'"
                     prepend-inner-icon="mdi-lock"
                     :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
@@ -39,20 +51,37 @@
                     variant="outlined"
                     :rules="passwordRules"
                     :error-messages="errors.password"
-                    class="mb-2"
+                    class="mb-4"
                     @input="errors.password = []"
                   ></v-text-field>
 
-                  <!-- Remember Me -->
-                  <div class="d-flex justify-space-between align-center mb-6">
-                    <v-checkbox
-                      v-model="rememberMe"
-                      label="記住我"
-                      hide-details
-                      density="compact"
-                    ></v-checkbox>
-                    <a href="#" class="text-primary text-decoration-none">忘記密碼？</a>
-                  </div>
+                  <!-- Password Confirmation -->
+                  <v-text-field
+                    v-model="passwordConfirmation"
+                    label="確認密碼"
+                    :type="showPasswordConfirm ? 'text' : 'password'"
+                    prepend-inner-icon="mdi-lock-check"
+                    :append-inner-icon="showPasswordConfirm ? 'mdi-eye-off' : 'mdi-eye'"
+                    @click:append-inner="showPasswordConfirm = !showPasswordConfirm"
+                    variant="outlined"
+                    :rules="passwordConfirmRules"
+                    class="mb-4"
+                  ></v-text-field>
+
+                  <!-- Terms Agreement -->
+                  <v-checkbox
+                    v-model="agreedToTerms"
+                    class="mb-4"
+                  >
+                    <template v-slot:label>
+                      <div>
+                        我同意
+                        <a href="#" class="text-primary">服務條款</a>
+                        和
+                        <a href="#" class="text-primary">隱私政策</a>
+                      </div>
+                    </template>
+                  </v-checkbox>
 
                   <!-- Error Alert -->
                   <v-alert
@@ -66,40 +95,31 @@
                     {{ errorMessage }}
                   </v-alert>
 
-                  <!-- Login Button -->
+                  <!-- Register Button -->
                   <v-btn
                     type="submit"
                     color="primary"
                     size="large"
                     block
                     :loading="loading"
+                    :disabled="!agreedToTerms"
                     class="mb-4"
                   >
-                    <v-icon left>mdi-login</v-icon>
-                    登入
+                    <v-icon left>mdi-account-plus</v-icon>
+                    註冊
                   </v-btn>
 
                   <!-- Divider -->
                   <v-divider class="my-4"></v-divider>
 
-                  <!-- Register Link -->
+                  <!-- Login Link -->
                   <div class="text-center">
-                    <span class="text-grey">還沒有帳號？</span>
-                    <router-link to="/register" class="text-primary text-decoration-none ml-1">
-                      立即註冊
+                    <span class="text-grey">已經有帳號了？</span>
+                    <router-link to="/login" class="text-primary text-decoration-none ml-1">
+                      立即登入
                     </router-link>
                   </div>
                 </v-form>
-              </v-card-text>
-            </v-card>
-
-            <!-- Demo Credentials -->
-            <v-card class="mt-4" variant="tonal" color="info">
-              <v-card-text>
-                <div class="text-center">
-                  <v-icon size="small" class="mr-2">mdi-information</v-icon>
-                  <strong>示範帳號:</strong> demo@stock.com | 密碼: demo1234
-                </div>
               </v-card-text>
             </v-card>
           </v-col>
@@ -110,31 +130,40 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 export default {
-  name: 'Login',
+  name: 'Register',
 
   setup() {
     const router = useRouter()
 
     // 表單資料
+    const name = ref('')
     const email = ref('')
     const password = ref('')
-    const rememberMe = ref(false)
+    const passwordConfirmation = ref('')
+    const agreedToTerms = ref(false)
     const showPassword = ref(false)
+    const showPasswordConfirm = ref(false)
 
     // 狀態
     const loading = ref(false)
     const errorMessage = ref('')
     const errors = ref({
+      name: [],
       email: [],
       password: []
     })
 
     // 驗證規則
+    const nameRules = [
+      v => !!v || '姓名為必填',
+      v => v.length >= 2 || '姓名至少需要 2 個字元'
+    ]
+
     const emailRules = [
       v => !!v || 'Email 為必填',
       v => /.+@.+\..+/.test(v) || 'Email 格式不正確'
@@ -142,19 +171,29 @@ export default {
 
     const passwordRules = [
       v => !!v || '密碼為必填',
-      v => v.length >= 6 || '密碼至少需要 6 個字元'
+      v => v.length >= 8 || '密碼至少需要 8 個字元',
+      v => /[A-Z]/.test(v) || '密碼需包含至少一個大寫字母',
+      v => /[a-z]/.test(v) || '密碼需包含至少一個小寫字母',
+      v => /[0-9]/.test(v) || '密碼需包含至少一個數字'
     ]
 
-    // 處理登入
-    const handleLogin = async () => {
+    const passwordConfirmRules = [
+      v => !!v || '請確認密碼',
+      v => v === password.value || '兩次輸入的密碼不一致'
+    ]
+
+    // 處理註冊
+    const handleRegister = async () => {
       loading.value = true
       errorMessage.value = ''
-      errors.value = { email: [], password: [] }
+      errors.value = { name: [], email: [], password: [] }
 
       try {
-        const response = await axios.post('/api/auth/login', {
+        const response = await axios.post('/api/auth/register', {
+          name: name.value,
           email: email.value,
-          password: password.value
+          password: password.value,
+          password_confirmation: passwordConfirmation.value
         })
 
         if (response.data.success) {
@@ -168,15 +207,6 @@ export default {
           // 儲存使用者資訊
           localStorage.setItem('user', JSON.stringify(response.data.data.user))
 
-          // 記住我
-          if (rememberMe.value) {
-            localStorage.setItem('rememberMe', 'true')
-            localStorage.setItem('savedEmail', email.value)
-          } else {
-            localStorage.removeItem('rememberMe')
-            localStorage.removeItem('savedEmail')
-          }
-
           // 導向儀表板
           router.push('/dashboard')
         }
@@ -185,17 +215,17 @@ export default {
           if (error.response.status === 422) {
             // 驗證錯誤
             const validationErrors = error.response.data.errors
+            if (validationErrors.name) {
+              errors.value.name = validationErrors.name
+            }
             if (validationErrors.email) {
               errors.value.email = validationErrors.email
             }
             if (validationErrors.password) {
               errors.value.password = validationErrors.password
             }
-          } else if (error.response.status === 401) {
-            // 帳號密碼錯誤
-            errorMessage.value = error.response.data.message || 'Email 或密碼錯誤'
           } else {
-            errorMessage.value = '登入失敗，請稍後再試'
+            errorMessage.value = error.response.data.message || '註冊失敗，請稍後再試'
           }
         } else {
           errorMessage.value = '網路連線錯誤，請檢查您的網路連線'
@@ -205,35 +235,29 @@ export default {
       }
     }
 
-    // 載入記住的 Email
-    const loadRememberedEmail = () => {
-      if (localStorage.getItem('rememberMe') === 'true') {
-        email.value = localStorage.getItem('savedEmail') || ''
-        rememberMe.value = true
-      }
-    }
-
-    // 初始化
-    loadRememberedEmail()
-
     return {
+      name,
       email,
       password,
-      rememberMe,
+      passwordConfirmation,
+      agreedToTerms,
       showPassword,
+      showPasswordConfirm,
       loading,
       errorMessage,
       errors,
+      nameRules,
       emailRules,
       passwordRules,
-      handleLogin
+      passwordConfirmRules,
+      handleRegister
     }
   }
 }
 </script>
 
 <style scoped>
-.login-container {
+.register-container {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
 }
