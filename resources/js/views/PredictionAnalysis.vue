@@ -5,14 +5,14 @@
         <v-card elevation="2">
           <v-card-title>
             <v-icon class="mr-2">mdi-chart-line</v-icon>
-            TXO 明日收盤價預測
+            明日收盤價預測
             <v-spacer></v-spacer>
             <v-btn
               color="primary"
               prepend-icon="mdi-play"
               @click="runPrediction"
               :loading="loading"
-              :disabled="!selectedOption"
+              :disabled="!canPredict"
               size="large"
             >
               執行預測
@@ -20,45 +20,81 @@
           </v-card-title>
 
           <v-card-text>
-            <!-- 預測設定區域 -->
+            <!-- 步驟 1：選擇標的類型 -->
             <v-row class="mb-4">
-              <!-- TXO 選擇權合約選擇 -->
-              <v-col cols="12" md="5">
+              <v-col cols="12">
+                <div class="text-h6 mb-3">步驟 1：選擇標的類型</div>
+                <v-btn-toggle
+                  v-model="targetType"
+                  color="primary"
+                  mandatory
+                  divided
+                  class="mb-4"
+                >
+                  <v-btn value="stock" size="large">
+                    <v-icon start>mdi-chart-line-variant</v-icon>
+                    股票
+                  </v-btn>
+                  <v-btn value="option" size="large">
+                    <v-icon start>mdi-chart-bell-curve</v-icon>
+                    選擇權 (TXO)
+                  </v-btn>
+                </v-btn-toggle>
+              </v-col>
+            </v-row>
+
+            <!-- 步驟 2：選擇具體標的（只有股票需要） -->
+            <v-row v-if="targetType === 'stock'" class="mb-4">
+              <v-col cols="12">
+                <div class="text-h6 mb-3">步驟 2：選擇股票</div>
                 <v-autocomplete
-                  v-model="selectedOption"
-                  :items="optionsList"
-                  :loading="loadingOptions"
+                  v-model="selectedStock"
+                  :items="stocksList"
+                  :loading="loadingStocks"
                   item-title="display_name"
                   item-value="id"
-                  label="選擇 TXO 合約"
-                  placeholder="輸入合約代碼或履約價搜尋..."
+                  label="選擇股票"
+                  placeholder="輸入股票代碼或名稱搜尋..."
                   density="comfortable"
                   clearable
                 >
                   <template v-slot:prepend-inner>
-                    <v-icon color="primary">mdi-file-document-outline</v-icon>
+                    <v-icon color="primary">mdi-chart-line-variant</v-icon>
                   </template>
                   <template v-slot:item="{ props, item }">
                     <v-list-item v-bind="props">
-                      <template v-slot:prepend>
-                        <v-chip
-                          :color="item.raw.option_type === 'call' ? 'success' : 'error'"
-                          size="small"
-                          class="font-weight-bold"
-                        >
-                          {{ item.raw.option_type === 'call' ? 'Call' : 'Put' }}
-                        </v-chip>
+                      <template v-slot:title>
+                        {{ item.raw.symbol }} {{ item.raw.name }}
                       </template>
                       <template v-slot:subtitle>
-                        履約價: {{ item.raw.strike_price }} | 到期: {{ item.raw.expiry_date }}
+                        最新價格: ${{ item.raw.latest_price || '---' }}
                       </template>
                     </v-list-item>
                   </template>
                 </v-autocomplete>
               </v-col>
+            </v-row>
 
-              <!-- 預測模型選擇 -->
-              <v-col cols="12" md="3">
+            <!-- TXO 說明（選擇權時顯示） -->
+            <v-row v-if="targetType === 'option'" class="mb-4">
+              <v-col cols="12">
+                <v-alert type="info" variant="tonal" class="mb-0">
+                  <v-alert-title>
+                    <v-icon>mdi-information</v-icon>
+                    台指選擇權 (TXO) 預測
+                  </v-alert-title>
+                  系統將使用 TXO 整體歷史資料，預測明日台指選擇權指數價格
+                </v-alert>
+              </v-col>
+            </v-row>
+
+            <!-- 步驟 3：選擇模型和參數 -->
+            <v-row class="mb-4">
+              <v-col cols="12">
+                <div class="text-h6 mb-3">步驟 {{ targetType === 'stock' ? '3' : '2' }}：模型設定</div>
+              </v-col>
+
+              <v-col cols="12" md="4">
                 <v-select
                   v-model="selectedModel"
                   :items="models"
@@ -70,11 +106,17 @@
                   <template v-slot:prepend-inner>
                     <v-icon color="primary">mdi-brain</v-icon>
                   </template>
+                  <template v-slot:item="{ props, item }">
+                    <v-list-item v-bind="props">
+                      <template v-slot:subtitle>
+                        {{ item.raw.description }}
+                      </template>
+                    </v-list-item>
+                  </template>
                 </v-select>
               </v-col>
 
-              <!-- 訓練期間 -->
-              <v-col cols="12" md="2">
+              <v-col cols="12" md="3">
                 <v-select
                   v-model="trainingPeriod"
                   :items="[30, 60, 90]"
@@ -88,7 +130,6 @@
                 </v-select>
               </v-col>
 
-              <!-- 進階設定 -->
               <v-col cols="12" md="2">
                 <v-btn
                   color="grey-darken-1"
@@ -108,20 +149,19 @@
               <v-col cols="12">
                 <v-card elevation="4" class="prediction-result-card">
                   <v-card-text class="pa-6">
-                    <!-- 合約資訊 -->
+                    <!-- 標的資訊 -->
                     <div class="d-flex align-center mb-4">
                       <v-chip
-                        :color="predictionResult.target_info.option_type === 'call' ? 'success' : 'error'"
+                        :color="targetType === 'stock' ? 'primary' : 'success'"
                         size="large"
                         class="mr-3"
                       >
-                        {{ predictionResult.target_info.option_type === 'call' ? 'Call' : 'Put' }}
+                        {{ targetType === 'stock' ? '股票' : 'TXO' }}
                       </v-chip>
                       <div>
-                        <div class="text-h6">{{ predictionResult.target_info.option_code }}</div>
+                        <div class="text-h6">{{ getTargetName() }}</div>
                         <div class="text-caption text-grey">
-                          履約價 {{ predictionResult.target_info.strike_price }} |
-                          到期日 {{ predictionResult.target_info.expiry_date }}
+                          {{ getTargetInfo() }}
                         </div>
                       </div>
                     </div>
@@ -223,7 +263,9 @@
               <v-col cols="12">
                 <v-card outlined class="text-center pa-12">
                   <v-icon size="80" color="grey-lighten-2">mdi-chart-timeline-variant</v-icon>
-                  <div class="text-h5 mt-4 text-grey-darken-1">選擇 TXO 合約並執行預測</div>
+                  <div class="text-h5 mt-4 text-grey-darken-1">
+                    {{ targetType === 'stock' ? '選擇股票並執行預測' : '執行 TXO 預測' }}
+                  </div>
                   <div class="text-body-2 text-grey mt-2">
                     系統將分析歷史價格資料，預測明日可能的收盤價
                   </div>
@@ -271,7 +313,7 @@
               max="200"
               step="10"
               thumb-label
-              :hint="`目前: ${modelParameters.lstm.epochs} 輪 (建議: 50-100)`"
+              :hint="`目前: ${modelParameters.lstm.epochs} 輪`"
               persistent-hint
               class="mb-4"
             ></v-slider>
@@ -282,17 +324,15 @@
               max="256"
               step="32"
               thumb-label
-              :hint="`目前: ${modelParameters.lstm.units} (建議: 128)`"
+              :hint="`目前: ${modelParameters.lstm.units}`"
               persistent-hint
             ></v-slider>
           </template>
           <template v-else-if="selectedModel === 'arima'">
             <v-switch
               v-model="modelParameters.arima.auto_select"
-              label="自動選擇最佳參數 (推薦)"
+              label="自動選擇最佳參數"
               color="primary"
-              hint="系統會自動找出最適合的模型參數"
-              persistent-hint
             ></v-switch>
           </template>
           <template v-else-if="selectedModel === 'garch'">
@@ -302,8 +342,6 @@
               type="number"
               min="1"
               max="3"
-              hint="建議: 1"
-              persistent-hint
             ></v-text-field>
             <v-text-field
               v-model.number="modelParameters.garch.q"
@@ -311,8 +349,6 @@
               type="number"
               min="1"
               max="3"
-              hint="建議: 1"
-              persistent-hint
               class="mt-2"
             ></v-text-field>
           </template>
@@ -335,21 +371,25 @@ export default {
   name: 'PredictionAnalysis',
   setup() {
     const loading = ref(false)
-    const loadingOptions = ref(false)
+    const loadingStocks = ref(false)
     const predictionResult = ref(null)
     const predictionChart = ref(null)
     const showParametersDialog = ref(false)
     const showChart = ref(false)
     let chartInstance = null
 
-    const selectedOption = ref(null)
-    const optionsList = ref([])
+    // 標的類型：stock 或 option
+    const targetType = ref('option')  // 預設選擇權
+
+    // 股票相關
+    const selectedStock = ref(null)
+    const stocksList = ref([])
 
     const selectedModel = ref('lstm')
     const models = ref([
-      { text: 'LSTM', value: 'lstm' },
-      { text: 'ARIMA', value: 'arima' },
-      { text: 'GARCH', value: 'garch' }
+      { text: 'LSTM', value: 'lstm', description: '深度學習 - 準確度高' },
+      { text: 'ARIMA', value: 'arima', description: '統計模型 - 速度快' },
+      { text: 'GARCH', value: 'garch', description: '波動率模型' }
     ])
 
     const trainingPeriod = ref(60)
@@ -366,6 +406,15 @@ export default {
       garch: {
         p: 1,
         q: 1
+      }
+    })
+
+    // 計算屬性
+    const canPredict = computed(() => {
+      if (targetType.value === 'stock') {
+        return selectedStock.value !== null
+      } else {
+        return true  // TXO 不需要選擇
       }
     })
 
@@ -389,39 +438,37 @@ export default {
       return predictionResult.value.predictions[0]?.confidence_upper?.toFixed(2) || '---'
     })
 
-    // 載入 TXO 選擇權列表（固定只查詢 TXO）
-    const loadOptions = async () => {
-      loadingOptions.value = true
+    // 載入股票列表
+    const loadStocks = async () => {
+      loadingStocks.value = true
       try {
-        const response = await axios.get('/api/options', {
+        const response = await axios.get('/stocks', {
           params: {
-            underlying: 'TXO',  // 固定只查詢 TXO
-            active_only: true,
-            per_page: 200  // 增加數量以顯示更多選項
+            per_page: 200
           }
         })
 
         if (response.data.success) {
-          optionsList.value = response.data.data.data.map(option => ({
-            id: option.id,
-            option_code: option.option_code,
-            option_type: option.option_type,
-            strike_price: option.strike_price,
-            expiry_date: option.expiry_date,
-            display_name: `${option.option_code} (${option.option_type === 'call' ? 'Call' : 'Put'} ${option.strike_price})`
+          stocksList.value = response.data.data.data.map(stock => ({
+            id: stock.id,
+            symbol: stock.symbol,
+            name: stock.name,
+            latest_price: stock.latest_price?.close,
+            display_name: `${stock.symbol} ${stock.name}`
           }))
         }
       } catch (error) {
-        console.error('載入 TXO 選擇權列表失敗:', error)
-        alert('無法載入選擇權列表，請檢查 API 連線')
+        console.error('載入股票列表失敗:', error)
+        alert('無法載入股票列表，請檢查 API 連線')
       } finally {
-        loadingOptions.value = false
+        loadingStocks.value = false
       }
     }
 
+    // 執行預測
     const runPrediction = async () => {
-      if (!selectedOption.value) {
-        alert('請選擇 TXO 合約')
+      if (!canPredict.value) {
+        alert(targetType.value === 'stock' ? '請選擇股票' : '請設定預測參數')
         return
       }
 
@@ -430,16 +477,18 @@ export default {
 
       try {
         const requestData = {
-          option_id: selectedOption.value,
+          target_type: targetType.value,  // 'stock' 或 'option'
+          target_id: targetType.value === 'stock' ? selectedStock.value : null,
+          underlying: targetType.value === 'option' ? 'TXO' : null,
           model_type: selectedModel.value,
-          prediction_days: 1,  // 固定預測明日
+          prediction_days: 1,
           parameters: {
             historical_days: trainingPeriod.value,
             ...modelParameters.value[selectedModel.value]
           }
         }
 
-        const response = await axios.post('/api/predictions/run', requestData)
+        const response = await axios.post('/predictions/run', requestData)
 
         if (response.data.success) {
           predictionResult.value = response.data.data
@@ -473,6 +522,20 @@ export default {
       if (change > 0) return 'success'
       if (change < 0) return 'error'
       return 'warning'
+    }
+
+    const getTargetName = () => {
+      if (targetType.value === 'stock' && predictionResult.value) {
+        return predictionResult.value.target_info?.name || '股票'
+      }
+      return '台指選擇權 (TXO)'
+    }
+
+    const getTargetInfo = () => {
+      if (targetType.value === 'stock' && predictionResult.value) {
+        return `代碼: ${predictionResult.value.target_info?.symbol || '---'}`
+      }
+      return '台灣期貨交易所 - 加權指數選擇權'
     }
 
     const getModelColor = (model) => {
@@ -549,6 +612,12 @@ export default {
       })
     }
 
+    // 監聽類型變化，清空結果
+    watch(targetType, () => {
+      predictionResult.value = null
+      selectedStock.value = null
+    })
+
     watch(showChart, (newValue) => {
       if (newValue && predictionResult.value) {
         setTimeout(() => {
@@ -558,7 +627,7 @@ export default {
     })
 
     onMounted(() => {
-      loadOptions()
+      loadStocks()
     })
 
     onUnmounted(() => {
@@ -569,25 +638,29 @@ export default {
 
     return {
       loading,
-      loadingOptions,
+      loadingStocks,
       predictionResult,
       predictionChart,
       showParametersDialog,
       showChart,
-      selectedOption,
-      optionsList,
+      targetType,
+      selectedStock,
+      stocksList,
       selectedModel,
       models,
       trainingPeriod,
       modelParameters,
+      canPredict,
       currentPrice,
       predictedPrice,
       confidenceLower,
       confidenceUpper,
-      loadOptions,
+      loadStocks,
       runPrediction,
       getPredictionChange,
       getPredictionColor,
+      getTargetName,
+      getTargetInfo,
       getModelColor,
       getModelName
     }
