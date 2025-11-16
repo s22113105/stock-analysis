@@ -470,7 +470,7 @@ export default {
     // ========================================
 
     const runPrediction = async () => {
-        // 驗證
+    // 驗證
         if (targetType.value === 'stock' && !selectedStock.value) {
             alert('請選擇股票')
             return
@@ -479,15 +479,18 @@ export default {
         loading.value = true
         predictionResult.value = null
 
+        // 🔧 修復 2: 在外層宣告 requestData
+        let requestData = null
+
         try {
-            // 🔧 關鍵修正:使用條件式展開,只加入需要的欄位
-            const requestData = {
-                // ✅ 只有股票模式才加入 stock_symbol
+            // 建立請求資料
+            requestData = {
+                // 只有股票模式才加入 stock_symbol
                 ...(targetType.value === 'stock' && {
                     stock_symbol: selectedStock.value
                 }),
 
-                // ✅ 只有選擇權模式才加入 underlying
+                // 只有選擇權模式才加入 underlying
                 ...(targetType.value === 'option' && {
                     underlying: 'TXO'
                 }),
@@ -503,7 +506,6 @@ export default {
                 }
             }
 
-            // 🔍 驗證請求資料
             console.log('📤 發送請求:', {
                 targetType: targetType.value,
                 requestData: requestData,
@@ -511,8 +513,8 @@ export default {
                 hasUnderlying: 'underlying' in requestData,
             })
 
-            // 發送請求
-            const response = await axios.post('/api/predictions/run', requestData)
+            // 🔧 修復 1: 移除 /api 前綴 (因為 baseURL 已經是 /api)
+            const response = await axios.post('/predictions/run', requestData)
 
             console.log('📥 收到回應:', response.data)
 
@@ -535,6 +537,7 @@ export default {
 
             let errorMessage = '預測執行失敗'
 
+            // 處理 422 驗證錯誤
             if (error.response?.status === 422) {
                 const errors = error.response.data.errors
 
@@ -556,7 +559,22 @@ export default {
                 } else {
                     errorMessage = error.response.data.message || '參數驗證失敗'
                 }
-            } else if (error.response?.data?.message) {
+            }
+            // 處理 405 Method Not Allowed
+            else if (error.response?.status === 405) {
+                errorMessage = 'API 路由錯誤,請檢查後端路由設定'
+                console.error('路由問題:', error.response.data.message)
+            }
+            // 處理 500 伺服器錯誤
+            else if (error.response?.status === 500) {
+                errorMessage = '伺服器內部錯誤'
+
+                if (error.response.data.message) {
+                    errorMessage += '\n\n詳細資訊: ' + error.response.data.message
+                }
+            }
+            // 處理其他錯誤
+            else if (error.response?.data?.message) {
                 errorMessage = error.response.data.message
             } else {
                 errorMessage = error.message || '未知錯誤'
@@ -564,10 +582,11 @@ export default {
 
             alert(errorMessage)
 
+            // 開發環境顯示詳細資訊
             console.group('🔍 詳細錯誤')
             console.log('錯誤:', error)
             console.log('回應:', error.response?.data)
-            console.log('請求:', requestData)
+            console.log('請求:', requestData)  // ✅ 現在可以存取了
             console.groupEnd()
 
         } finally {
