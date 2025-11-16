@@ -119,7 +119,7 @@
               <v-col cols="12" md="3">
                 <v-select
                   v-model="trainingPeriod"
-                  :items="[30, 60, 90]"
+                  :items="[100, 150, 200]"
                   label="訓練期間"
                   density="comfortable"
                   suffix="天"
@@ -392,7 +392,7 @@ export default {
       { text: 'GARCH', value: 'garch', description: '波動率模型' }
     ])
 
-    const trainingPeriod = ref(60)
+    const trainingPeriod = ref(180)
 
     const modelParameters = ref({
       lstm: {
