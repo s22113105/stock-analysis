@@ -390,7 +390,7 @@ class PredictionService
         file_put_contents($tempFile, $inputJson);
 
         try {
-            // 🔧 統一使用 python3 (Python 3.11.9)
+            // 🔧 使用 python3 (Python 3.11.9 with numpy)
             $pythonCommand = 'python3';
 
             $command = "{$pythonCommand} {$scriptPath} '{$tempFile}'";
@@ -401,19 +401,8 @@ class PredictionService
                 'script' => $scriptPath
             ]);
 
-            // 🔧 設定環境變數
-            $pythonDir = 'C:\\Python313';
-            $pythonScripts = $pythonDir . '\\Scripts';
-            $currentPath = getenv('PATH');
-
-            $result = Process::timeout(120)
-                ->env([
-                    'PATH' => $pythonDir . ';' . $pythonScripts . ';' . $currentPath,
-                    'PYTHONPATH' => '',
-                    'PYTHONIOENCODING' => 'utf-8',
-                    'TF_CPP_MIN_LOG_LEVEL' => '2'
-                ])
-                ->run($command);
+            // 🔧 直接執行,不修改環境變數
+            $result = Process::timeout(120)->run($command);
 
             if (!$result->successful()) {
                 // 清理錯誤訊息中的非 UTF-8 字元
