@@ -1,48 +1,47 @@
 <template>
   <v-app>
-    <v-main>
-      <v-container fluid class="fill-height register-container">
-        <v-row align="center" justify="center">
-          <v-col cols="12" sm="8" md="5">
-            <!-- Logo & Title -->
-            <div class="text-center mb-8">
-              <v-icon size="80" color="primary">mdi-chart-line</v-icon>
-              <h1 class="text-h4 mt-4 font-weight-bold">建立新帳號</h1>
-              <p class="text-subtitle-1 text-grey">開始使用 Stock_Analysis 系統</p>
+    <v-main class="register-container d-flex align-center">
+      <v-container>
+        <v-row justify="center">
+          <v-col cols="12" sm="8" md="6" lg="5" xl="4">
+            <!-- Logo and Title -->
+            <div class="text-center mb-6">
+              <v-icon size="80" color="white">mdi-chart-line</v-icon>
+              <h1 class="text-h3 font-weight-bold text-white mt-4">建立新帳號</h1>
+              <p class="text-subtitle-1 text-white-70">開始使用 Stock_Analysis 系統</p>
             </div>
 
             <!-- Register Card -->
-            <v-card elevation="8" rounded="lg">
+            <v-card elevation="10" rounded="lg">
               <v-card-text class="pa-8">
-                <v-form @submit.prevent="handleRegister" ref="registerForm">
-                  <!-- Name -->
+                <v-form @submit.prevent="handleRegister">
+                  <!-- Name Field -->
                   <v-text-field
                     v-model="name"
+                    :error-messages="errors.name"
                     label="姓名"
                     prepend-inner-icon="mdi-account"
                     variant="outlined"
                     :rules="nameRules"
-                    :error-messages="errors.name"
                     class="mb-4"
-                    @input="errors.name = []"
                   ></v-text-field>
 
-                  <!-- Email -->
+                  <!-- Email Field -->
                   <v-text-field
                     v-model="email"
+                    :error-messages="errors.email"
                     label="Email"
                     type="email"
                     prepend-inner-icon="mdi-email"
                     variant="outlined"
                     :rules="emailRules"
-                    :error-messages="errors.email"
                     class="mb-4"
-                    @input="errors.email = []"
                   ></v-text-field>
 
-                  <!-- Password -->
+                  <!-- Password Field -->
                   <v-text-field
                     v-model="password"
+                    :error-messages="errors.password"
                     label="密碼"
                     :type="showPassword ? 'text' : 'password'"
                     prepend-inner-icon="mdi-lock"
@@ -50,12 +49,10 @@
                     @click:append-inner="showPassword = !showPassword"
                     variant="outlined"
                     :rules="passwordRules"
-                    :error-messages="errors.password"
                     class="mb-4"
-                    @input="errors.password = []"
                   ></v-text-field>
 
-                  <!-- Password Confirmation -->
+                  <!-- Password Confirmation Field -->
                   <v-text-field
                     v-model="passwordConfirmation"
                     label="確認密碼"
@@ -114,7 +111,7 @@
 
                   <!-- Login Link -->
                   <div class="text-center">
-                    <span class="text-grey">已經有帳號了？</span>
+                    <span class="text-grey">已經有帳號了?</span>
                     <router-link to="/login" class="text-primary text-decoration-none ml-1">
                       立即登入
                     </router-link>
@@ -189,7 +186,8 @@ export default {
       errors.value = { name: [], email: [], password: [] }
 
       try {
-        const response = await axios.post('/api/auth/register', {
+        // ✅ 修正:移除 /api 前綴,因為 baseURL 已經是 /api
+        const response = await axios.post('auth/register', {
           name: name.value,
           email: email.value,
           password: password.value,
@@ -207,10 +205,15 @@ export default {
           // 儲存使用者資訊
           localStorage.setItem('user', JSON.stringify(response.data.data.user))
 
+          // 顯示成功訊息
+          console.log('✅ 註冊成功!導向儀表板...')
+
           // 導向儀表板
           router.push('/dashboard')
         }
       } catch (error) {
+        console.error('❌ 註冊錯誤:', error)
+        
         if (error.response) {
           if (error.response.status === 422) {
             // 驗證錯誤
@@ -225,10 +228,10 @@ export default {
               errors.value.password = validationErrors.password
             }
           } else {
-            errorMessage.value = error.response.data.message || '註冊失敗，請稍後再試'
+            errorMessage.value = error.response.data.message || '註冊失敗,請稍後再試'
           }
         } else {
-          errorMessage.value = '網路連線錯誤，請檢查您的網路連線'
+          errorMessage.value = '網路連線錯誤,請檢查您的網路連線'
         }
       } finally {
         loading.value = false
@@ -264,5 +267,9 @@ export default {
 
 .v-card {
   backdrop-filter: blur(10px);
+}
+
+.text-white-70 {
+  color: rgba(255, 255, 255, 0.7);
 }
 </style>
