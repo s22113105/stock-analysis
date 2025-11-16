@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Prediction;
 use App\Models\Stock;
-use App\Models\Option;
 use App\Services\PredictionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -14,8 +13,8 @@ use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 
 /**
- * 預測模型 API 控制器（支援股票和選擇權）
- * 整合真實的 Python 機器學習模型
+ * 預測模型 API 控制器
+ * 支援股票預測和整體市場預測 (TXO)
  */
 class PredictionController extends Controller
 {
@@ -81,16 +80,20 @@ class PredictionController extends Controller
     }
 
     /**
-     * 執行預測（支援股票和選擇權）
+     * 執行預測
      *
      * POST /api/predictions/run
+     *
+     * 支援兩種模式:
+     * 1. 股票預測: 傳入 stock_symbol
+     * 2. 整體市場預測: 傳入 underlying (如 'TXO')
      */
     public function run(Request $request): JsonResponse
     {
-        // 驗證規則
+        // 驗證規則 - 只支援 stock_symbol 或 underlying
         $validator = Validator::make($request->all(), [
-            'stock_symbol' => 'required_without:option_id|string',
-            'option_id' => 'required_without:stock_symbol|integer|exists:options,id',
+            'stock_symbol' => 'required_without:underlying|string',
+            'underlying' => 'required_without:stock_symbol|string|in:TXO',
             'model_type' => 'required|in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',
             'parameters' => 'nullable|array',
@@ -109,56 +112,51 @@ class PredictionController extends Controller
             $predictionDays = $request->input('prediction_days', 1);
             $parameters = $request->input('parameters', []);
 
-            // 判斷預測標的類型
-            if ($request->has('option_id')) {
-                // 選擇權預測
-                $option = Option::with('latestPrice')->findOrFail($request->input('option_id'));
+            // 處理整體市場預測 (TXO)
+            if ($request->has('underlying')) {
+                $underlying = $request->input('underlying');
 
-                Log::info('開始選擇權預測', [
-                    'option_id' => $option->id,
-                    'option_code' => $option->option_code,
-                    'model_type' => $modelType
+                Log::info('開始整體市場預測', [
+                    'underlying' => $underlying,
+                    'model_type' => $modelType,
+                    'prediction_days' => $predictionDays
                 ]);
 
-                // 根據不同模型執行選擇權預測
+                // 根據不同模型執行整體預測
                 $result = match ($modelType) {
-                    'lstm' => $this->predictionService->runOptionLSTMPrediction($option, $predictionDays, $parameters),
-                    'arima' => $this->predictionService->runOptionARIMAPrediction($option, $predictionDays, $parameters),
-                    'garch' => $this->predictionService->runOptionGARCHPrediction($option, $predictionDays, $parameters),
+                    'lstm' => $this->predictionService->runUnderlyingLSTMPrediction($underlying, $predictionDays, $parameters),
+                    'arima' => $this->predictionService->runUnderlyingARIMAPrediction($underlying, $predictionDays, $parameters),
+                    'garch' => $this->predictionService->runUnderlyingGARCHPrediction($underlying, $predictionDays, $parameters),
                 };
 
                 if (!$result['success']) {
                     return response()->json($result, 400);
                 }
 
-                // 取得當前價格
-                $latestPrice = $option->latestPrice;
-                $currentPrice = $latestPrice ? $latestPrice->close : null;
-
                 return response()->json([
                     'success' => true,
                     'message' => '預測完成',
                     'data' => [
                         'target_info' => [
-                            'type' => 'option',
-                            'id' => $option->id,
-                            'option_code' => $option->option_code,
-                            'option_type' => $option->option_type,
-                            'strike_price' => $option->strike_price,
-                            'expiry_date' => $option->expiry_date,
+                            'type' => 'underlying',
+                            'underlying' => $underlying,
+                            'description' => '台指期貨(TXO標的)',
+                            'representative_option' => $result['representative_option'] ?? null,
                         ],
-                        'current_price' => $currentPrice,
-                        'current_date' => $latestPrice ? $latestPrice->trade_date : null,
+                        'current_price' => $result['current_price'] ?? null,
+                        'current_date' => $result['current_date'] ?? null,
                         'model_type' => $modelType,
                         'predictions' => $result['predictions'],
                         'historical_prices' => $result['historical_prices'] ?? [],
                         'metrics' => $result['metrics'] ?? null,
                         'model_info' => $result['model_info'] ?? null,
+                        'data_source' => $result['data_source'] ?? 'TXO主力契約',
                     ]
                 ]);
+            }
 
-            } else {
-                // 股票預測
+            // 處理股票預測
+            if ($request->has('stock_symbol')) {
                 $stock = Stock::where('symbol', $request->input('stock_symbol'))->firstOrFail();
 
                 Log::info('開始股票預測', [
@@ -202,9 +200,17 @@ class PredictionController extends Controller
                     ]
                 ]);
             }
+
+            // 理論上不會到這裡,因為驗證規則要求必須有 stock_symbol 或 underlying
+            return response()->json([
+                'success' => false,
+                'message' => '請提供 stock_symbol 或 underlying 參數'
+            ], 422);
         } catch (\Exception $e) {
             Log::error('預測執行錯誤', [
                 'model_type' => $request->input('model_type'),
+                'has_underlying' => $request->has('underlying'),
+                'has_stock_symbol' => $request->has('stock_symbol'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -257,8 +263,8 @@ class PredictionController extends Controller
     public function compare(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'stock_symbol' => 'required_without:option_id|string',
-            'option_id' => 'required_without:stock_symbol|integer|exists:options,id',
+            'stock_symbol' => 'required_without:underlying|string',
+            'underlying' => 'required_without:stock_symbol|string|in:TXO',
             'models' => 'required|array',
             'models.*' => 'in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',
@@ -274,7 +280,6 @@ class PredictionController extends Controller
 
         try {
             $models = $request->input('models');
-            $predictionDays = $request->input('prediction_days', 7);
             $results = [];
 
             foreach ($models as $modelType) {

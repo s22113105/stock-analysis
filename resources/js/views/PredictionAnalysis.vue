@@ -465,48 +465,114 @@ export default {
       }
     }
 
-    // 執行預測
+    // ========================================
+    // PredictionAnalysis.vue - runPrediction 函數修正
+    // ========================================
+
     const runPrediction = async () => {
-      if (!canPredict.value) {
-        alert(targetType.value === 'stock' ? '請選擇股票' : '請設定預測參數')
-        return
-      }
-
-      loading.value = true
-      predictionResult.value = null
-
-      try {
-        const requestData = {
-          target_type: targetType.value,  // 'stock' 或 'option'
-          target_id: targetType.value === 'stock' ? selectedStock.value : null,
-          underlying: targetType.value === 'option' ? 'TXO' : null,
-          model_type: selectedModel.value,
-          prediction_days: 1,
-          parameters: {
-            historical_days: trainingPeriod.value,
-            ...modelParameters.value[selectedModel.value]
-          }
+        // 驗證
+        if (targetType.value === 'stock' && !selectedStock.value) {
+            alert('請選擇股票')
+            return
         }
 
-        const response = await axios.post('/predictions/run', requestData)
+        loading.value = true
+        predictionResult.value = null
 
-        if (response.data.success) {
-          predictionResult.value = response.data.data
+        try {
+            // 🔧 關鍵修正:使用條件式展開,只加入需要的欄位
+            const requestData = {
+                // ✅ 只有股票模式才加入 stock_symbol
+                ...(targetType.value === 'stock' && {
+                    stock_symbol: selectedStock.value
+                }),
 
-          if (showChart.value) {
-            setTimeout(() => {
-              updateChart()
-            }, 100)
-          }
-        } else {
-          alert('預測失敗: ' + (response.data.message || '未知錯誤'))
+                // ✅ 只有選擇權模式才加入 underlying
+                ...(targetType.value === 'option' && {
+                    underlying: 'TXO'
+                }),
+
+                // 共同參數
+                model_type: selectedModel.value.toLowerCase(),
+                prediction_days: 1,
+                parameters: {
+                    historical_days: trainingPeriod.value,
+                    epochs: modelParameters.value[selectedModel.value]?.epochs || 100,
+                    units: modelParameters.value[selectedModel.value]?.units || 128,
+                    lookback: modelParameters.value[selectedModel.value]?.lookback || 60
+                }
+            }
+
+            // 🔍 驗證請求資料
+            console.log('📤 發送請求:', {
+                targetType: targetType.value,
+                requestData: requestData,
+                hasStockSymbol: 'stock_symbol' in requestData,
+                hasUnderlying: 'underlying' in requestData,
+            })
+
+            // 發送請求
+            const response = await axios.post('/api/predictions/run', requestData)
+
+            console.log('📥 收到回應:', response.data)
+
+            if (response.data.success) {
+                predictionResult.value = response.data.data
+
+                if (showChart.value) {
+                    setTimeout(() => {
+                        updateChart()
+                    }, 100)
+                }
+
+                console.log('✅ 預測完成')
+            } else {
+                alert('預測失敗: ' + (response.data.message || '未知錯誤'))
+            }
+
+        } catch (error) {
+            console.error('❌ 預測執行失敗:', error)
+
+            let errorMessage = '預測執行失敗'
+
+            if (error.response?.status === 422) {
+                const errors = error.response.data.errors
+
+                if (errors) {
+                    const errorList = Object.entries(errors)
+                        .map(([field, messages]) => {
+                            const fieldNames = {
+                                'stock_symbol': '股票代碼',
+                                'underlying': '標的市場',
+                                'model_type': '模型類型',
+                                'prediction_days': '預測天數'
+                            }
+                            const fieldName = fieldNames[field] || field
+                            return `• ${fieldName}: ${messages.join(', ')}`
+                        })
+                        .join('\n')
+
+                    errorMessage = `參數驗證失敗:\n\n${errorList}`
+                } else {
+                    errorMessage = error.response.data.message || '參數驗證失敗'
+                }
+            } else if (error.response?.data?.message) {
+                errorMessage = error.response.data.message
+            } else {
+                errorMessage = error.message || '未知錯誤'
+            }
+
+            alert(errorMessage)
+
+            console.group('🔍 詳細錯誤')
+            console.log('錯誤:', error)
+            console.log('回應:', error.response?.data)
+            console.log('請求:', requestData)
+            console.groupEnd()
+
+        } finally {
+            loading.value = false
         }
-      } catch (error) {
-        console.error('預測執行失敗:', error)
-        alert('預測失敗: ' + (error.response?.data?.message || error.message))
-      } finally {
-        loading.value = false
-      }
     }
 
     const getPredictionChange = () => {

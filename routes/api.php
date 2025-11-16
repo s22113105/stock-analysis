@@ -10,7 +10,7 @@ use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\OptionController;
 use App\Http\Controllers\VolatilityController;
-use App\Http\Controllers\PredictionController;
+use App\Http\Controllers\Api\PredictionController;
 use App\Http\Controllers\BacktestController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\RealtimeController;
