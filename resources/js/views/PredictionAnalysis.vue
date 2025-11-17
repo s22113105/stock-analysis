@@ -80,7 +80,6 @@
               <v-col cols="12">
                 <v-alert type="info" variant="tonal" class="mb-0">
                   <v-alert-title>
-                    <v-icon>mdi-information</v-icon>
                     台指選擇權 (TXO) 預測
                   </v-alert-title>
                   系統將使用 TXO 整體歷史資料，預測明日台指選擇權指數價格

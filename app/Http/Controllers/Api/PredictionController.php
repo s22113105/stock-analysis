@@ -86,14 +86,14 @@ class PredictionController extends Controller
      *
      * 支援兩種模式:
      * 1. 股票預測: 傳入 stock_symbol
-     * 2. 整體市場預測: 傳入 underlying (如 'TXO')
+     * 2. TXO 市場預測: 傳入 underlying
      */
     public function run(Request $request): JsonResponse
     {
-        // 驗證規則 - 只支援 stock_symbol 或 underlying
+        // 驗證基本參數
         $validator = Validator::make($request->all(), [
-            'stock_symbol' => 'required_without:underlying|string',
-            'underlying' => 'required_without:stock_symbol|string|in:TXO',
+            'stock_symbol' => 'nullable|string',
+            'underlying' => 'nullable|string',
             'model_type' => 'required|in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',
             'parameters' => 'nullable|array',
@@ -122,11 +122,11 @@ class PredictionController extends Controller
                     'prediction_days' => $predictionDays
                 ]);
 
-                // 根據不同模型執行整體預測
+                // ✅ 修正:使用正確的方法名稱
                 $result = match ($modelType) {
-                    'lstm' => $this->predictionService->runUnderlyingLSTMPrediction($underlying, $predictionDays, $parameters),
-                    'arima' => $this->predictionService->runUnderlyingARIMAPrediction($underlying, $predictionDays, $parameters),
-                    'garch' => $this->predictionService->runUnderlyingGARCHPrediction($underlying, $predictionDays, $parameters),
+                    'lstm' => $this->predictionService->runTxoMarketLSTMPrediction($underlying, $predictionDays, $parameters),
+                    'arima' => $this->predictionService->runTxoMarketARIMAPrediction($underlying, $predictionDays, $parameters),
+                    'garch' => $this->predictionService->runTxoMarketGARCHPrediction($underlying, $predictionDays, $parameters),
                 };
 
                 if (!$result['success']) {
@@ -138,10 +138,9 @@ class PredictionController extends Controller
                     'message' => '預測完成',
                     'data' => [
                         'target_info' => [
-                            'type' => 'underlying',
+                            'type' => 'market',
                             'underlying' => $underlying,
-                            'description' => '台指期貨(TXO標的)',
-                            'representative_option' => $result['representative_option'] ?? null,
+                            'name' => 'TXO 台指選擇權',
                         ],
                         'current_price' => $result['current_price'] ?? null,
                         'current_date' => $result['current_date'] ?? null,
@@ -150,7 +149,7 @@ class PredictionController extends Controller
                         'historical_prices' => $result['historical_prices'] ?? [],
                         'metrics' => $result['metrics'] ?? null,
                         'model_info' => $result['model_info'] ?? null,
-                        'data_source' => $result['data_source'] ?? 'TXO主力契約',
+                        'data_source' => $result['data_source'] ?? 'TXO市場指數',
                     ]
                 ]);
             }
@@ -201,16 +200,13 @@ class PredictionController extends Controller
                 ]);
             }
 
-            // 理論上不會到這裡,因為驗證規則要求必須有 stock_symbol 或 underlying
+            // 如果都沒有提供
             return response()->json([
                 'success' => false,
                 'message' => '請提供 stock_symbol 或 underlying 參數'
             ], 422);
         } catch (\Exception $e) {
-            Log::error('預測執行錯誤', [
-                'model_type' => $request->input('model_type'),
-                'has_underlying' => $request->has('underlying'),
-                'has_stock_symbol' => $request->has('stock_symbol'),
+            Log::error('預測執行失敗', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -223,48 +219,15 @@ class PredictionController extends Controller
     }
 
     /**
-     * LSTM 預測（快捷路由）
-     *
-     * POST /api/predictions/lstm
-     */
-    public function lstm(Request $request): JsonResponse
-    {
-        $request->merge(['model_type' => 'lstm']);
-        return $this->run($request);
-    }
-
-    /**
-     * ARIMA 預測（快捷路由）
-     *
-     * POST /api/predictions/arima
-     */
-    public function arima(Request $request): JsonResponse
-    {
-        $request->merge(['model_type' => 'arima']);
-        return $this->run($request);
-    }
-
-    /**
-     * GARCH 預測（快捷路由）
-     *
-     * POST /api/predictions/garch
-     */
-    public function garch(Request $request): JsonResponse
-    {
-        $request->merge(['model_type' => 'garch']);
-        return $this->run($request);
-    }
-
-    /**
-     * 比較多個模型
+     * 執行模型比較
      *
      * POST /api/predictions/compare
      */
     public function compare(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'stock_symbol' => 'required_without:underlying|string',
-            'underlying' => 'required_without:stock_symbol|string|in:TXO',
+            'stock_symbol' => 'nullable|string',
+            'underlying' => 'nullable|string',
             'models' => 'required|array',
             'models.*' => 'in:lstm,arima,garch',
             'prediction_days' => 'nullable|integer|min:1|max:30',

@@ -16,11 +16,17 @@ use Carbon\Carbon;
  */
 class PredictionService
 {
-    // 使用 base_path() 動態取得路徑
+    /**
+     * 取得 Python 模型路徑
+     */
     private function getPythonModelsPath(): string
     {
         return base_path('python') . DIRECTORY_SEPARATOR . 'models' . DIRECTORY_SEPARATOR;
     }
+
+    /**
+     * 支援的模型列表
+     */
     private const SUPPORTED_MODELS = [
         'lstm' => 'lstm_model.py',
         'arima' => 'arima_model.py',
@@ -38,9 +44,12 @@ class PredictionService
     }
 
     // ========================================
-    // 股票預測方法 (維持不變)
+    // 股票預測方法
     // ========================================
 
+    /**
+     * 執行 LSTM 股票預測
+     */
     public function runLSTMPrediction(Stock $stock, int $predictionDays = 7, array $parameters = []): array
     {
         try {
@@ -92,6 +101,9 @@ class PredictionService
         }
     }
 
+    /**
+     * 執行 ARIMA 股票預測
+     */
     public function runARIMAPrediction(Stock $stock, int $predictionDays = 7, array $parameters = []): array
     {
         try {
@@ -132,6 +144,9 @@ class PredictionService
         }
     }
 
+    /**
+     * 執行 GARCH 股票預測
+     */
     public function runGARCHPrediction(Stock $stock, int $predictionDays = 7, array $parameters = []): array
     {
         try {
@@ -172,14 +187,13 @@ class PredictionService
     }
 
     // ========================================
-    // TXO 整體市場預測方法 (使用市場指數)
+    // TXO 市場預測方法
     // ========================================
 
     /**
-     * 🆕 執行 TXO 整體市場 LSTM 預測
-     * 使用所有契約的加權平均價格指數
+     * 執行 TXO 市場指數 LSTM 預測
      */
-    public function runUnderlyingLSTMPrediction(string $underlying, int $predictionDays = 1, array $parameters = []): array
+    public function runTxoMarketLSTMPrediction(string $underlying = 'TXO', int $predictionDays = 1, array $parameters = []): array
     {
         try {
             Log::info('開始執行 TXO 市場指數 LSTM 預測', [
@@ -187,40 +201,39 @@ class PredictionService
                 'prediction_days' => $predictionDays
             ]);
 
-            // 🔧 使用市場指數服務獲取歷史資料
-            $historicalDays = $parameters['historical_days'] ?? 200;
-            $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
+            $historicalDays = $parameters['historical_days'] ?? 180;
 
-            if (count($prices) < 100) {
-                return [
-                    'success' => false,
-                    'message' => "歷史資料不足,LSTM 模型需要至少 100 天的資料。目前只有 " . count($prices) . " 天的資料。"
-                ];
-            }
+            // ✅ 修正:使用正確的方法名稱
+            $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             Log::info('獲取 TXO 市場指數資料', [
                 'data_points' => count($prices),
                 'date_range' => [
-                    'from' => $prices[0]['date'],
-                    'to' => end($prices)['date']
+                    'from' => $prices[0]['date'] ?? null,
+                    'to' => end($prices)['date'] ?? null
                 ]
             ]);
 
-            // 準備輸入資料
+            if (count($prices) < 60) {
+                return [
+                    'success' => false,
+                    'message' => "歷史資料不足,LSTM 模型需要至少 60 天的資料。目前只有 " . count($prices) . " 天的資料。"
+                ];
+            }
+
             $inputData = [
                 'prices' => array_column($prices, 'close'),
                 'dates' => array_column($prices, 'date'),
                 'volumes' => array_column($prices, 'volume'),
                 'base_date' => Carbon::now()->format('Y-m-d'),
                 'prediction_days' => $predictionDays,
-                'option_code' => 'TXO_MARKET_INDEX',  // 標記為市場指數
+                'stock_symbol' => $underlying,
                 'epochs' => $parameters['epochs'] ?? 100,
                 'units' => $parameters['units'] ?? 128,
                 'lookback' => $parameters['lookback'] ?? 60,
                 'dropout' => $parameters['dropout'] ?? 0.2,
             ];
 
-            // 執行 Python 腳本
             $result = $this->executePythonModel('lstm', $inputData);
 
             if ($result['success']) {
@@ -245,14 +258,14 @@ class PredictionService
     }
 
     /**
-     * 🆕 執行 TXO 整體市場 ARIMA 預測
+     * 執行 TXO 市場指數 ARIMA 預測
      */
-    public function runUnderlyingARIMAPrediction(string $underlying, int $predictionDays = 1, array $parameters = []): array
+    public function runTxoMarketARIMAPrediction(string $underlying = 'TXO', int $predictionDays = 1, array $parameters = []): array
     {
         try {
-            Log::info('開始執行 TXO 市場指數 ARIMA 預測');
-
             $historicalDays = $parameters['historical_days'] ?? 100;
+
+            // ✅ 修正:使用正確的方法名稱
             $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             if (count($prices) < 30) {
@@ -267,7 +280,7 @@ class PredictionService
                 'dates' => array_column($prices, 'date'),
                 'base_date' => Carbon::now()->format('Y-m-d'),
                 'prediction_days' => $predictionDays,
-                'option_code' => 'TXO_MARKET_INDEX',
+                'stock_symbol' => $underlying,
                 'p' => $parameters['p'] ?? null,
                 'd' => $parameters['d'] ?? null,
                 'q' => $parameters['q'] ?? null,
@@ -293,14 +306,14 @@ class PredictionService
     }
 
     /**
-     * 🆕 執行 TXO 整體市場 GARCH 預測
+     * 執行 TXO 市場指數 GARCH 預測
      */
-    public function runUnderlyingGARCHPrediction(string $underlying, int $predictionDays = 1, array $parameters = []): array
+    public function runTxoMarketGARCHPrediction(string $underlying = 'TXO', int $predictionDays = 1, array $parameters = []): array
     {
         try {
-            Log::info('開始執行 TXO 市場指數 GARCH 預測');
-
             $historicalDays = $parameters['historical_days'] ?? 200;
+
+            // ✅ 修正:使用正確的方法名稱
             $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             if (count($prices) < 100) {
@@ -315,7 +328,7 @@ class PredictionService
                 'dates' => array_column($prices, 'date'),
                 'base_date' => Carbon::now()->format('Y-m-d'),
                 'prediction_days' => $predictionDays,
-                'option_code' => 'TXO_MARKET_INDEX',
+                'stock_symbol' => $underlying,
                 'p' => $parameters['p'] ?? 1,
                 'q' => $parameters['q'] ?? 1,
                 'dist' => $parameters['dist'] ?? 'normal',
@@ -343,6 +356,9 @@ class PredictionService
     // 私有輔助方法
     // ========================================
 
+    /**
+     * 從資料庫取得股票歷史價格
+     */
     private function getHistoricalPricesFromDB(Stock $stock, int $days = 100): array
     {
         $prices = StockPrice::where('stock_id', $stock->id)
@@ -369,9 +385,6 @@ class PredictionService
     /**
      * 執行 Python 模型
      */
-    /**
-     * 執行 Python 模型
-     */
     private function executePythonModel(string $modelType, array $inputData): array
     {
         if (!isset(self::SUPPORTED_MODELS[$modelType])) {
@@ -390,8 +403,8 @@ class PredictionService
         file_put_contents($tempFile, $inputJson);
 
         try {
-            // 🔧 使用 python3 (Python 3.11.9 with numpy)
-            $pythonCommand = 'python3';
+            // 使用標準 Python 3.13
+            $pythonCommand = 'C:\\Python313\\python.exe';
 
             $command = "{$pythonCommand} {$scriptPath} '{$tempFile}'";
 
@@ -401,8 +414,16 @@ class PredictionService
                 'script' => $scriptPath
             ]);
 
-            // 🔧 直接執行,不修改環境變數
-            $result = Process::timeout(120)->run($command);
+            // 設定完整的 Python 環境變數
+            $result = Process::timeout(120)
+                ->env([
+                    'PYTHONPATH' => 'C:\\Python313\\Lib\\site-packages',
+                    'PYTHONHOME' => 'C:\\Python313',
+                    'PYTHONNOUSERSITE' => '1',  // 禁用 User site-packages
+                    'PATH' => 'C:\\Python313;C:\\Python313\\Scripts;' . getenv('PATH'),
+                    'PYTHONIOENCODING' => 'utf-8'
+                ])
+                ->run($command);
 
             if (!$result->successful()) {
                 // 清理錯誤訊息中的非 UTF-8 字元
