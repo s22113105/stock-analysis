@@ -81,6 +81,21 @@ services:
       - stock-analysis-network
     command: redis-server --appendonly yes
 
+  # Node.js (用於前端建置)
+  node:
+    image: node:20-alpine
+    container_name: stock-analysis-node
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    networks:
+      - stock-analysis-network
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5173:5173"
+    environment:
+      - HOST=0.0.0.0
+
   # phpMyAdmin
   phpmyadmin:
     image: phpmyadmin:latest
@@ -99,15 +114,15 @@ services:
     depends_on:
       - db
 
-  # Queue Worker
-  queue:
+  # ⭐ Horizon Worker (取代原本的 queue worker)
+  horizon:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: stock-analysis-queue
+    container_name: stock-analysis-horizon
     restart: unless-stopped
     working_dir: /var/www
-    command: php artisan queue:work redis --sleep=3 --tries=3 --daemon
+    command: php artisan horizon
     volumes:
       - ./:/var/www
     networks:
@@ -116,6 +131,36 @@ services:
       - app
       - redis
       - db
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=stock_analysis
+      - DB_USERNAME=laravel
+      - DB_PASSWORD=secret
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # Scheduler (用於執行排程任務)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stock-analysis-scheduler
+    restart: unless-stopped
+    working_dir: /var/www
+    command: >
+      sh -c "while true; do
+        php artisan schedule:run --verbose --no-interaction &
+        sleep 60
+      done"
+    volumes:
+      - ./:/var/www
+    networks:
+      - stock-analysis-network
+    depends_on:
+      - app
+      - db
+      - redis
 
 networks:
   stock-analysis-network:
