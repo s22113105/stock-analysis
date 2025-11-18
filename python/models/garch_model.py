@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 GARCH 波動率預測模型
-用於預測股價波動率，對選擇權定價很重要
+用於預測股價波動率,對選擇權定價很重要
 """
 
 import sys
@@ -83,8 +83,19 @@ class GARCHPredictor:
         # 計算無條件波動率
         params = self.fitted_model.params
         omega = params['omega']
-        alpha = params[['alpha[%d]' % i for i in range(1, self.p + 1)]].sum()
-        beta = params[['beta[%d]' % i for i in range(1, self.q + 1)]].sum()
+
+        # 處理 GARCH 和 ARCH 參數
+        alpha = 0
+        for i in range(1, self.q + 1):
+            key = f'alpha[{i}]'
+            if key in params:
+                alpha += params[key]
+
+        beta = 0
+        for i in range(1, self.p + 1):
+            key = f'beta[{i}]'
+            if key in params:
+                beta += params[key]
 
         # 長期波動率
         if (alpha + beta) < 1:
@@ -102,7 +113,7 @@ class GARCHPredictor:
                 'alpha': float(alpha),
                 'beta': float(beta)
             },
-            'long_run_volatility': float(long_run_volatility) if long_run_volatility else None
+            'long_run_volatility': float(long_run_volatility) if long_run_volatility and not np.isnan(long_run_volatility) else None
         }
 
     def predict(self, horizon=7):
@@ -136,7 +147,7 @@ class GARCHPredictor:
 
     def calculate_var_cvar(self, prices, confidence_levels=[0.95, 0.99]):
         """
-        計算 VaR 和 CVaR（風險值與條件風險值）
+        計算 VaR 和 CVaR(風險值與條件風險值)
 
         Args:
             prices: 股價序列
@@ -171,23 +182,14 @@ class GARCHPredictor:
             test_results: 測試結果
         """
         returns = self.calculate_returns(prices)
+
+        # 計算報酬率的自相關
         squared_returns = returns ** 2
-
-        # 計算自相關
-        from statsmodels.stats.diagnostic import acorr_ljungbox
-
-        # Ljung-Box 測試
-        lb_test = acorr_ljungbox(squared_returns, lags=10, return_df=True)
-
-        # ARCH 效應測試
-        from statsmodels.stats.diagnostic import het_arch
-        arch_test = het_arch(returns, nlags=5)
+        correlation = np.corrcoef(squared_returns[:-1], squared_returns[1:])[0, 1]
 
         return {
-            'ljung_box_pvalue': float(lb_test['lb_pvalue'].iloc[-1]),
-            'arch_lm_statistic': float(arch_test[0]),
-            'arch_lm_pvalue': float(arch_test[1]),
-            'has_volatility_clustering': arch_test[1] < 0.05
+            'squared_returns_correlation': float(correlation),
+            'has_clustering': correlation > 0.1
         }
 
 def main():
@@ -201,7 +203,10 @@ def main():
             }))
             sys.exit(1)
 
-        input_data = json.loads(sys.argv[1])
+        # 從文件讀取 JSON (Laravel 傳遞文件路徑)
+        temp_file_path = sys.argv[1]
+        with open(temp_file_path, 'r', encoding='utf-8') as f:
+            input_data = json.load(f)
 
         # 解析參數
         prices = np.array(input_data['prices'])
@@ -216,7 +221,7 @@ def main():
         if len(prices) < 100:
             print(json.dumps({
                 'success': False,
-                'error': '資料不足，至少需要100天的歷史資料'
+                'error': '資料不足,GARCH模型至少需要100天的歷史資料'
             }))
             sys.exit(1)
 
@@ -226,7 +231,7 @@ def main():
         # 訓練模型
         model_info = predictor.train(prices)
 
-        # 預測波動率
+        # 進行波動率預測
         volatility_predictions = predictor.predict(horizon=prediction_days)
 
         # 計算風險指標
@@ -239,7 +244,7 @@ def main():
         base_date = datetime.strptime(input_data['base_date'], '%Y-%m-%d')
         predictions_with_dates = []
 
-        # 計算當前價格（用於預測價格範圍）
+        # 計算當前價格(用於預測價格範圍)
         current_price = float(prices[-1])
 
         for i, vol_pred in enumerate(volatility_predictions):
@@ -263,7 +268,7 @@ def main():
             'predictions': predictions_with_dates,
             'model_info': {
                 'model_type': 'GARCH',
-                'order': f'GARCH({self.p},{self.q})',
+                'order': f'GARCH({p},{q})',
                 'aic': round(model_info['aic'], 2),
                 'bic': round(model_info['bic'], 2),
                 'long_run_volatility': round(model_info['long_run_volatility'], 4) if model_info['long_run_volatility'] else None
@@ -275,9 +280,11 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
 
     except Exception as e:
+        import traceback
         print(json.dumps({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }))
         sys.exit(1)
 

@@ -7,39 +7,45 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * TXO 市場指數服務
- * UTF-8 安全版本
+ * 修正版本 - 正確取得最新資料
  */
 class TxoMarketIndexService
 {
     /**
      * 計算 TXO 市場每日加權平均價格指數
+     *
+     * @param int $days 需要的歷史天數
+     * @return array 歷史價格陣列,按日期升序排列
      */
     public function getHistoricalIndexForPrediction(int $days = 200): array
     {
         try {
             Log::info('開始計算 TXO 市場指數', ['days' => $days]);
 
-            // 使用 CAST 確保資料類型正確,避免 UTF-8 問題
+            // ✅ 修正:使用子查詢先取得最新的 N 天,然後按日期升序排列
             $indexData = DB::select("
-                SELECT
-                    CAST(trade_date AS CHAR) as date,
-                    CAST(SUM(close * volume) / NULLIF(SUM(volume), 0) AS DECIMAL(10,2)) as weighted_price,
-                    CAST(AVG(close) AS DECIMAL(10,2)) as avg_price,
-                    CAST(SUM(volume) AS UNSIGNED) as total_volume
-                FROM option_prices
-                WHERE option_id IN (
-                    SELECT id
-                    FROM options
-                    WHERE underlying = 'TXO'
-                    AND is_active = 1
-                )
-                AND close IS NOT NULL
-                AND close > 0
-                AND volume IS NOT NULL
-                AND volume > 0
-                GROUP BY trade_date
-                ORDER BY trade_date ASC
-                LIMIT ?
+                SELECT *
+                FROM (
+                    SELECT
+                        CAST(trade_date AS CHAR) as date,
+                        CAST(SUM(close * volume) / NULLIF(SUM(volume), 0) AS DECIMAL(10,2)) as weighted_price,
+                        CAST(AVG(close) AS DECIMAL(10,2)) as avg_price,
+                        CAST(SUM(volume) AS UNSIGNED) as total_volume
+                    FROM option_prices
+                    WHERE option_id IN (
+                        SELECT id
+                        FROM options
+                        WHERE underlying = 'TXO'
+                    )
+                    AND close IS NOT NULL
+                    AND close > 0
+                    AND volume IS NOT NULL
+                    AND volume > 0
+                    GROUP BY trade_date
+                    ORDER BY trade_date DESC
+                    LIMIT ?
+                ) as latest_data
+                ORDER BY date ASC
             ", [$days]);
 
             // 清理和轉換資料
