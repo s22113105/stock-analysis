@@ -203,7 +203,7 @@ class PredictionService
 
             $historicalDays = $parameters['historical_days'] ?? 180;
 
-            // ✅ 修正:使用正確的方法名稱
+            // 使用正確的方法名稱
             $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             Log::info('獲取 TXO 市場指數資料', [
@@ -264,8 +264,6 @@ class PredictionService
     {
         try {
             $historicalDays = $parameters['historical_days'] ?? 100;
-
-            // ✅ 修正:使用正確的方法名稱
             $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             if (count($prices) < 30) {
@@ -312,8 +310,6 @@ class PredictionService
     {
         try {
             $historicalDays = $parameters['historical_days'] ?? 200;
-
-            // ✅ 修正:使用正確的方法名稱
             $prices = $this->txoIndexService->getHistoricalIndexForPrediction($historicalDays);
 
             if (count($prices) < 100) {
@@ -383,7 +379,7 @@ class PredictionService
     }
 
     /**
-     * 執行 Python 模型
+     * 執行 Python 模型（修正 Windows 環境問題）
      */
     private function executePythonModel(string $modelType, array $inputData): array
     {
@@ -406,22 +402,46 @@ class PredictionService
             // 使用標準 Python 3.13
             $pythonCommand = 'C:\\Python313\\python.exe';
 
-            $command = "{$pythonCommand} {$scriptPath} '{$tempFile}'";
+            // 使用檔案路徑作為參數
+            $command = "{$pythonCommand} {$scriptPath} \"{$tempFile}\"";
 
             Log::info('執行 Python 命令', [
                 'os' => PHP_OS_FAMILY,
                 'command' => $pythonCommand,
-                'script' => $scriptPath
+                'script' => $scriptPath,
+                'temp_file' => $tempFile
             ]);
 
-            // 設定完整的 Python 環境變數
+            // 取得系統環境變數
+            $systemPath = getenv('PATH');
+            $systemRoot = getenv('SystemRoot') ?: 'C:\\Windows';
+            $programFiles = getenv('ProgramFiles') ?: 'C:\\Program Files';
+
+            // 設定完整的環境變數，包含 Windows 系統路徑
             $result = Process::timeout(120)
                 ->env([
                     'PYTHONPATH' => 'C:\\Python313\\Lib\\site-packages',
                     'PYTHONHOME' => 'C:\\Python313',
-                    'PYTHONNOUSERSITE' => '1',  // 禁用 User site-packages
-                    'PATH' => 'C:\\Python313;C:\\Python313\\Scripts;' . getenv('PATH'),
-                    'PYTHONIOENCODING' => 'utf-8'
+                    'PATH' => implode(';', [
+                        'C:\\Python313',
+                        'C:\\Python313\\Scripts',
+                        $systemRoot . '\\System32',
+                        $systemRoot . '\\System32\\Wbem',
+                        $systemRoot . '\\System32\\WindowsPowerShell\\v1.0',
+                        $systemRoot,
+                        $programFiles . '\\Windows Kits\\10\\Windows Performance Toolkit',
+                        $systemPath
+                    ]),
+                    'SystemRoot' => $systemRoot,
+                    'WINDIR' => $systemRoot,
+                    'ComSpec' => $systemRoot . '\\System32\\cmd.exe',
+                    'TEMP' => sys_get_temp_dir(),
+                    'TMP' => sys_get_temp_dir(),
+                    'PYTHONIOENCODING' => 'utf-8',
+                    'PYTHONUTF8' => '1',
+                    'NO_PROXY' => '*',  // 避免網路代理問題
+                    'PYTHONDONTWRITEBYTECODE' => '1',  // 避免寫入 .pyc 檔案
+                    'TF_CPP_MIN_LOG_LEVEL' => '2'  // 減少 TensorFlow 輸出
                 ])
                 ->run($command);
 

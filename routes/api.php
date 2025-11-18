@@ -20,10 +20,11 @@ use App\Http\Controllers\AdminController;
 | 認證路由 (公開)
 |--------------------------------------------------------------------------
 */
+
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
-    
+
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
@@ -116,7 +117,7 @@ Route::prefix('volatility')->group(function () {
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    
+
     // Predictions
     Route::prefix('predictions')->group(function () {
         Route::get('/', [PredictionController::class, 'index']);
@@ -174,20 +175,20 @@ Route::middleware('auth:sanctum')->group(function () {
     // Admin
     Route::prefix('admin')->group(function () {
         Route::get('/overview', [AdminController::class, 'overview']);
-        
+
         Route::prefix('jobs')->group(function () {
             Route::get('/queue', [AdminController::class, 'queueJobs']);
             Route::post('/trigger-stock-crawler', [AdminController::class, 'triggerStockCrawler']);
             Route::post('/trigger-option-crawler', [AdminController::class, 'triggerOptionCrawler']);
             Route::post('/retry/{id}', [AdminController::class, 'retryFailedJob']);
         });
-        
+
         Route::prefix('cache')->group(function () {
             Route::post('/clear', [AdminController::class, 'clearCache']);
         });
-        
+
         Route::get('/logs', [AdminController::class, 'logs']);
-        
+
         Route::prefix('database')->group(function () {
             Route::post('/optimize', [AdminController::class, 'optimizeDatabase']);
         });
