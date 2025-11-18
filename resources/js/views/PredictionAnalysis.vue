@@ -537,7 +537,7 @@ export default {
         console.log('發送預測請求:', requestData)
 
         // 呼叫 API
-        const response = await axios.post('/api/predictions/run', requestData)
+        const response = await axios.post('/predictions/run', requestData)
 
         console.log('預測回應:', response.data)
 
