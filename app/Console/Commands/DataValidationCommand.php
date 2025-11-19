@@ -8,6 +8,7 @@ use App\Models\Option;
 use App\Models\OptionPrice;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 /**
@@ -91,51 +92,118 @@ class DataValidationCommand extends Command
         DB::beginTransaction();
 
         try {
-            // 1. 清除模擬股價資料 (沒有實際 API 來源的)
-            $mockPrices = StockPrice::whereNull('source')
-                ->orWhere('source', 'mock')
-                ->orWhere('source', 'test')
-                ->count();
+            $totalDeleted = 0;
 
-            if ($mockPrices > 0) {
-                StockPrice::whereNull('source')
-                    ->orWhere('source', 'mock')
-                    ->orWhere('source', 'test')
-                    ->delete();
+            // 1. 清除異常價格資料 (價格 <= 0 或為 null)
+            $this->line('1️⃣  清除異常價格資料...');
+            $invalidPrices = StockPrice::where(function ($query) {
+                $query->where('close', '<=', 0)
+                      ->orWhereNull('close');
+            })->count();
+
+            if ($invalidPrices > 0) {
+                StockPrice::where(function ($query) {
+                    $query->where('close', '<=', 0)
+                          ->orWhereNull('close');
+                })->delete();
                 
-                $this->line("  ✅ 已刪除 {$mockPrices} 筆模擬股價資料");
+                $this->line("  ✅ 已刪除 {$invalidPrices} 筆異常價格資料");
+                $totalDeleted += $invalidPrices;
+            } else {
+                $this->line("  ✅ 沒有異常價格資料");
             }
 
-            // 2. 清除沒有價格記錄的股票
+            // 2. 清除未來日期的資料 (可能是測試資料)
+            $this->line('2️⃣  清除未來日期資料...');
+            $futureData = StockPrice::where('trade_date', '>', now()->format('Y-m-d'))->count();
+
+            if ($futureData > 0) {
+                StockPrice::where('trade_date', '>', now()->format('Y-m-d'))->delete();
+                $this->line("  ✅ 已刪除 {$futureData} 筆未來日期資料");
+                $totalDeleted += $futureData;
+            } else {
+                $this->line("  ✅ 沒有未來日期資料");
+            }
+
+            // 3. 清除沒有價格記錄的股票
+            $this->line('3️⃣  清除沒有價格記錄的股票...');
             $emptyStocks = Stock::doesntHave('prices')->count();
             
             if ($emptyStocks > 0) {
                 Stock::doesntHave('prices')->delete();
                 $this->line("  ✅ 已刪除 {$emptyStocks} 檔沒有價格記錄的股票");
+                $totalDeleted += $emptyStocks;
+            } else {
+                $this->line("  ✅ 沒有空股票記錄");
             }
 
-            // 3. 清除異常價格資料 (價格 = 0 或 null)
-            $invalidPrices = StockPrice::where('close', '<=', 0)
-                ->orWhereNull('close')
+            // 4. 清除成交量和成交金額都為 0 的記錄 (可能是測試資料)
+            $this->line('4️⃣  清除無交易量資料...');
+            $noTradeData = StockPrice::where('volume', '=', 0)
+                ->where(function ($query) {
+                    $query->whereNull('turnover')
+                          ->orWhere('turnover', '=', 0);
+                })
                 ->count();
 
-            if ($invalidPrices > 0) {
-                StockPrice::where('close', '<=', 0)
-                    ->orWhereNull('close')
+            if ($noTradeData > 0) {
+                StockPrice::where('volume', '=', 0)
+                    ->where(function ($query) {
+                        $query->whereNull('turnover')
+                              ->orWhere('turnover', '=', 0);
+                    })
                     ->delete();
+                    
+                $this->line("  ✅ 已刪除 {$noTradeData} 筆無交易量資料");
+                $totalDeleted += $noTradeData;
+            } else {
+                $this->line("  ✅ 沒有無交易量資料");
+            }
+
+            // 5. 清除選擇權測試資料 (如果有的話)
+            if (Option::count() > 0) {
+                $this->line('5️⃣  清除選擇權測試資料...');
                 
-                $this->line("  ✅ 已刪除 {$invalidPrices} 筆異常價格資料");
+                // 清除異常的選擇權價格
+                $invalidOptionPrices = OptionPrice::where(function ($query) {
+                    $query->where('close', '<=', 0)
+                          ->orWhereNull('close');
+                })->count();
+
+                if ($invalidOptionPrices > 0) {
+                    OptionPrice::where(function ($query) {
+                        $query->where('close', '<=', 0)
+                              ->orWhereNull('close');
+                    })->delete();
+                    
+                    $this->line("  ✅ 已刪除 {$invalidOptionPrices} 筆異常選擇權價格");
+                    $totalDeleted += $invalidOptionPrices;
+                }
+
+                // 清除沒有價格記錄的選擇權
+                $emptyOptions = Option::doesntHave('prices')->count();
+                
+                if ($emptyOptions > 0) {
+                    Option::doesntHave('prices')->delete();
+                    $this->line("  ✅ 已刪除 {$emptyOptions} 個沒有價格記錄的選擇權");
+                    $totalDeleted += $emptyOptions;
+                }
             }
 
             DB::commit();
 
             $this->newLine();
-            $this->info('✅ 測試資料清除完成！');
+            $this->info("✅ 測試資料清除完成！共刪除 {$totalDeleted} 筆資料");
             $this->newLine();
 
         } catch (\Exception $e) {
             DB::rollBack();
             $this->error('❌ 清除失敗: ' . $e->getMessage());
+            
+            Log::error('測試資料清除失敗', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 
@@ -242,7 +310,7 @@ class DataValidationCommand extends Command
         $this->info('========================================');
         
         if (empty($issues)) {
-            $this->info('✅ 所有檢查通過，資料完整！');
+            $this->info('✅ 所有檢查通過,資料完整！');
         } else {
             $this->warn('⚠️  發現以下問題:');
             foreach ($issues as $issue) {
@@ -302,10 +370,14 @@ class DataValidationCommand extends Command
             ];
         }, $coverageData), 0, 10);
 
-        $this->table(
-            ['代碼', '名稱', '記錄數', '起始日', '最新日'],
-            $tableData
-        );
+        if (!empty($tableData)) {
+            $this->table(
+                ['代碼', '名稱', '記錄數', '起始日', '最新日'],
+                $tableData
+            );
+        } else {
+            $this->warn('  ⚠️  沒有資料可以顯示');
+        }
 
         // 2. 每日資料量統計
         $this->newLine();
@@ -319,6 +391,56 @@ class DataValidationCommand extends Command
         }
 
         $this->table(['日期', '記錄數'], $dailyStats);
+
+        // 3. 月度統計
+        $this->newLine();
+        $this->line('📊 最近3個月統計:');
+        
+        $monthlyStats = [];
+        for ($i = 2; $i >= 0; $i--) {
+            $month = now()->subMonths($i)->format('Y-m');
+            $count = StockPrice::where('trade_date', 'like', $month . '%')->count();
+            $monthlyStats[] = [$month, $count];
+        }
+
+        $this->table(['月份', '記錄數'], $monthlyStats);
+
+        // 4. 資料品質指標
+        $this->newLine();
+        $this->line('🔍 資料品質指標:');
+        
+        $totalRecords = StockPrice::count();
+        $validRecords = StockPrice::where('close', '>', 0)->count();
+        $recordsWithVolume = StockPrice::where('volume', '>', 0)->count();
+        $recordsWithChangePercent = StockPrice::whereNotNull('change_percent')->count();
+
+        $qualityMetrics = [
+            ['總記錄數', number_format($totalRecords)],
+            ['有效記錄 (收盤價>0)', number_format($validRecords), $totalRecords > 0 ? round(($validRecords / $totalRecords) * 100, 2) . '%' : '0%'],
+            ['有成交量記錄', number_format($recordsWithVolume), $totalRecords > 0 ? round(($recordsWithVolume / $totalRecords) * 100, 2) . '%' : '0%'],
+            ['有漲跌幅記錄', number_format($recordsWithChangePercent), $totalRecords > 0 ? round(($recordsWithChangePercent / $totalRecords) * 100, 2) . '%' : '0%'],
+        ];
+
+        $this->table(['指標', '數量', '比例'], $qualityMetrics);
+
+        // 5. 選擇權資料統計
+        if (Option::count() > 0) {
+            $this->newLine();
+            $this->line('📊 選擇權資料統計:');
+            
+            $optionStats = [
+                ['選擇權合約總數', Option::count()],
+                ['啟用中合約', Option::where('is_active', true)->count()],
+                ['Call 合約', Option::where('option_type', 'call')->count()],
+                ['Put 合約', Option::where('option_type', 'put')->count()],
+                ['價格記錄總數', OptionPrice::count()],
+            ];
+
+            $this->table(['項目', '數量'], $optionStats);
+        }
+
+        $this->newLine();
+        $this->info('✅ 報告產生完成！');
     }
 
     /**
@@ -340,13 +462,17 @@ class DataValidationCommand extends Command
             // 1. 移除重複資料 (保留最新的)
             $this->line('🔄 移除重複資料...');
             
+            // 查詢重複資料,取得每組重複資料中最大的 ID (最新的記錄)
+            /** @var \Illuminate\Support\Collection<int, \stdClass> $duplicates */
             $duplicates = DB::table('stock_prices')
                 ->select('stock_id', 'trade_date', DB::raw('MAX(id) as keep_id'))
                 ->groupBy('stock_id', 'trade_date')
                 ->having(DB::raw('COUNT(*)'), '>', 1)
                 ->get();
 
+            // 遍歷每組重複資料並刪除舊的記錄
             foreach ($duplicates as $dup) {
+                // 刪除該股票在該日期的所有記錄,但保留 ID 最大的那筆
                 $deleted = StockPrice::where('stock_id', $dup->stock_id)
                     ->where('trade_date', $dup->trade_date)
                     ->where('id', '!=', $dup->keep_id)
@@ -357,28 +483,97 @@ class DataValidationCommand extends Command
 
             if ($fixed > 0) {
                 $this->line("  ✅ 移除了 {$fixed} 筆重複記錄");
+            } else {
+                $this->line("  ✅ 沒有發現重複記錄");
             }
 
-            // 2. 修復 change_percent
-            $this->line('📈 修復漲跌幅...');
+            // 2. 修復 change_percent (漲跌幅)
+            $this->newLine();
+            $this->line('📊 修復漲跌幅資料...');
             
-            $needsFix = StockPrice::where('change_percent', 0)
+            // 查詢 change_percent 為 null 或 0 但 close 價格存在的記錄
+            $needsFix = StockPrice::where(function ($query) {
+                $query->whereNull('change_percent')
+                      ->orWhere('change_percent', 0);
+            })
                 ->where('close', '>', 0)
                 ->count();
 
             if ($needsFix > 0) {
-                // 這裡可以實作修復邏輯
-                $this->line("  ℹ️  有 {$needsFix} 筆記錄需要重新計算漲跌幅");
+                $fixedChangePercent = 0;
+                
+                // 使用 chunk 處理大量資料,避免記憶體溢出
+                StockPrice::where(function ($query) {
+                    $query->whereNull('change_percent')
+                          ->orWhere('change_percent', 0);
+                })
+                    ->where('close', '>', 0)
+                    ->chunk(1000, function ($prices) use (&$fixedChangePercent) {
+                        foreach ($prices as $price) {
+                            // 取得前一個交易日的收盤價
+                            $prevPrice = StockPrice::where('stock_id', $price->stock_id)
+                                ->where('trade_date', '<', $price->trade_date)
+                                ->orderBy('trade_date', 'desc')
+                                ->first();
+
+                            if ($prevPrice && $prevPrice->close > 0) {
+                                // 計算漲跌幅: (今日收盤價 - 昨日收盤價) / 昨日收盤價 * 100
+                                $changePercent = (($price->close - $prevPrice->close) / $prevPrice->close) * 100;
+                                
+                                $price->update([
+                                    'change_percent' => round($changePercent, 2)
+                                ]);
+                                
+                                $fixedChangePercent++;
+                            }
+                        }
+                    });
+
+                $this->line("  ✅ 修復了 {$fixedChangePercent} 筆漲跌幅資料");
+            } else {
+                $this->line("  ✅ 漲跌幅資料正常");
+            }
+
+            // 3. 清除異常資料
+            $this->newLine();
+            $this->line('🗑️  清除異常資料...');
+            
+            // 刪除價格異常的記錄 (收盤價 <= 0 或為 null)
+            $invalidPrices = StockPrice::where(function ($query) {
+                $query->where('close', '<=', 0)
+                      ->orWhereNull('close');
+            })->count();
+
+            if ($invalidPrices > 0) {
+                StockPrice::where(function ($query) {
+                    $query->where('close', '<=', 0)
+                          ->orWhereNull('close');
+                })->delete();
+                
+                $this->line("  ✅ 刪除了 {$invalidPrices} 筆異常價格記錄");
+            } else {
+                $this->line("  ✅ 沒有異常價格記錄");
             }
 
             DB::commit();
 
             $this->newLine();
-            $this->info("✅ 修復完成！共處理 {$fixed} 個問題");
+            $totalFixed = $fixed + ($needsFix > 0 ? 1 : 0) + ($invalidPrices > 0 ? 1 : 0);
+            $this->info("✅ 修復完成！共處理 {$totalFixed} 個問題類型");
+            $this->newLine();
 
         } catch (\Exception $e) {
             DB::rollBack();
+            
             $this->error('❌ 修復失敗: ' . $e->getMessage());
+            $this->newLine();
+            $this->error('錯誤詳情:');
+            $this->line($e->getTraceAsString());
+            
+            Log::error('資料修復失敗', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 }
