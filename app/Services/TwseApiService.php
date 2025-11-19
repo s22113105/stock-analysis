@@ -7,23 +7,98 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
+/**
+ * 台灣證券交易所 API 服務
+ * 
+ * 提供台股市場資料查詢功能
+ */
 class TwseApiService
 {
     protected $baseUrl;
+    protected $openApiBaseUrl;
     protected $timeout;
     protected $retries;
 
     public function __construct()
     {
         $this->baseUrl = config('services.twse.base_url', 'https://www.twse.com.tw');
+        $this->openApiBaseUrl = config('services.twse.openapi_base_url', 'https://openapi.twse.com.tw/v1');
         $this->timeout = config('services.twse.timeout', 30);
         $this->retries = config('services.twse.retries', 3);
     }
 
     /**
-     * 取得單一股票的每日行情 (當月所有日期)
+     * 取得所有股票的單日資料
+     * 
+     * @param string $date 日期 (Ymd 格式, 例如: 20251105)
+     * @return \Illuminate\Support\Collection
      */
-    public function getStockDay($symbol)
+    public function getStockDayAll(string $date): \Illuminate\Support\Collection
+    {
+        // 確保日期格式正確 (轉換為 Ymd)
+        if (strlen($date) === 10 && strpos($date, '-') !== false) {
+            // 如果是 Y-m-d 格式,轉換為 Ymd
+            $date = Carbon::parse($date)->format('Ymd');
+        }
+
+        $endpoint = "/data/BWIBBU_d";  // 每日收盤行情
+
+        $params = [
+            'date' => $date,
+            'response' => 'json'
+        ];
+
+        Log::info("嘗試從 TWSE API 取得所有股票資料", [
+            'date' => $date,
+            'endpoint' => $this->openApiBaseUrl . $endpoint
+        ]);
+
+        $response = $this->makeOpenApiRequest($endpoint, $params);
+
+        if (!$response || !isset($response['data'])) {
+            Log::warning("TWSE API 回傳空資料或格式錯誤", [
+                'date' => $date,
+                'response' => $response
+            ]);
+            return collect();
+        }
+
+        // 解析資料
+        $stocks = collect($response['data'])->map(function ($item) use ($date) {
+            // 資料格式: [代碼, 名稱, 成交股數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌, 成交筆數]
+            return [
+                'symbol' => $this->cleanSymbol($item['Code'] ?? $item[0] ?? ''),
+                'name' => $this->cleanStockName($item['Name'] ?? $item[1] ?? ''),
+                'trade_date' => $this->formatDateFromTWSE($date),
+                'volume' => $this->parseNumber($item['TradeVolume'] ?? $item[2] ?? 0),
+                'turnover' => $this->parseNumber($item['TradeValue'] ?? $item[3] ?? 0),
+                'open' => $this->parsePrice($item['OpeningPrice'] ?? $item[4] ?? null),
+                'high' => $this->parsePrice($item['HighestPrice'] ?? $item[5] ?? null),
+                'low' => $this->parsePrice($item['LowestPrice'] ?? $item[6] ?? null),
+                'close' => $this->parsePrice($item['ClosingPrice'] ?? $item[7] ?? null),
+                'change' => $this->parsePrice($item['Change'] ?? $item[8] ?? 0),
+                'transaction' => $this->parseNumber($item['Transaction'] ?? $item[9] ?? 0),
+            ];
+        })->filter(function ($item) {
+            // 過濾掉無效資料
+            return !empty($item['symbol']) && !empty($item['close']);
+        });
+
+        Log::info("成功取得股票資料", [
+            'date' => $date,
+            'count' => $stocks->count()
+        ]);
+
+        return $stocks;
+    }
+
+    /**
+     * 取得單一股票的每日行情 (當月所有日期)
+     * 
+     * @param string $symbol 股票代碼
+     * @return \Illuminate\Support\Collection
+     */
+    public function getStockDay(string $symbol): \Illuminate\Support\Collection
     {
         $endpoint = "/exchangeReport/STOCK_DAY";
 
@@ -56,60 +131,35 @@ class TwseApiService
     }
 
     /**
-     * 取得所有股票列表 (從交易所取得)
+     * 取得所有股票代碼列表
+     * 
+     * @return \Illuminate\Support\Collection
      */
-    public function getAllStockSymbols()
+    public function getAllStockSymbols(): \Illuminate\Support\Collection
     {
-        // 台股主要股票代碼範圍
-        // 上市公司: 1000-9999
-        // 這裡提供常用的股票代碼,實際專案中可以從其他來源取得完整列表
-        
+        // 台股主要股票代碼
         $stocks = [
-            '2330', '2317', '2454', '2308', '2303', // 科技股
-            '2882', '2881', '2891', '2892', '2886', // 金融股
-            '1301', '1303', '1326', '2002', '2105', // 傳產股
-            '0050', '0056', '00878', '006208',      // ETF
+            // 科技股
+            '2330', '2317', '2454', '2308', '2303', '2327', '3034', '6505', '2382', '2379',
+            // 金融股
+            '2882', '2881', '2891', '2892', '2886', '2887', '2880', '2883', '2885', '2884',
+            // 傳產股
+            '1301', '1303', '1326', '2002', '2105', '2207', '2301', '2357', '1402', '1216',
+            // ETF
+            '0050', '0056', '00878', '006208', '00692', '00881', '00885',
         ];
 
         return collect($stocks);
     }
 
     /**
-     * 從標題中提取股票名稱
+     * 發送請求到 TWSE 舊版 API
+     * 
+     * @param string $endpoint API 端點
+     * @param array $params 請求參數
+     * @return array|null
      */
-    protected function extractStockName($title)
-    {
-        // 標題格式: "114年11月 2317 鴻海 各日成交資訊"
-        if (preg_match('/\d{4}\s+(.+?)\s+各日成交資訊/', $title, $matches)) {
-            return trim($matches[1]);
-        }
-        return '';
-    }
-
-    /**
-     * 解析民國年日期為西元年
-     */
-    protected function parseROCDate($dateString)
-    {
-        // 格式: "114/11/03" 或 "114/11/3"
-        if (preg_match('/(\d{2,3})\/(\d{1,2})\/(\d{1,2})/', $dateString, $matches)) {
-            $rocYear = intval($matches[1]);
-            $month = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
-            $day = str_pad($matches[3], 2, '0', STR_PAD_LEFT);
-            
-            // 民國年轉西元年
-            $adYear = $rocYear + 1911;
-            
-            return "{$adYear}-{$month}-{$day}";
-        }
-
-        return null;
-    }
-
-    /**
-     * 發送 HTTP 請求
-     */
-    protected function makeRequest($endpoint, $params = [])
+    protected function makeRequest(string $endpoint, array $params = []): ?array
     {
         $url = $this->baseUrl . $endpoint;
 
@@ -117,7 +167,7 @@ class TwseApiService
         $cacheKey = 'twse_' . md5($url . json_encode($params));
 
         if (Cache::has($cacheKey)) {
-            Log::info("使用快取資料: {$cacheKey}");
+            Log::info("使用快取資料", ['key' => $cacheKey]);
             return Cache::get($cacheKey);
         }
 
@@ -150,6 +200,7 @@ class TwseApiService
                 'status' => $response->status(),
                 'body' => $response->body()
             ]);
+
         } catch (\Exception $e) {
             Log::error("TWSE API 請求失敗", [
                 'error' => $e->getMessage(),
@@ -162,39 +213,176 @@ class TwseApiService
     }
 
     /**
-     * 解析數字 (移除逗號)
+     * 發送請求到 TWSE OpenAPI
+     * 
+     * @param string $endpoint API 端點
+     * @param array $params 請求參數
+     * @return array|null
      */
-    protected function parseNumber($value)
+    protected function makeOpenApiRequest(string $endpoint, array $params = []): ?array
     {
-        if (!$value || $value === '--' || $value === 'X') {
+        $url = $this->openApiBaseUrl . $endpoint;
+
+        // 加入快取機制 (快取 10 分鐘)
+        $cacheKey = 'twse_openapi_' . md5($url . json_encode($params));
+
+        if (Cache::has($cacheKey)) {
+            Log::info("使用快取資料", ['key' => $cacheKey]);
+            return Cache::get($cacheKey);
+        }
+
+        try {
+            Log::info("發送請求至 TWSE OpenAPI", ['url' => $url, 'params' => $params]);
+
+            $response = Http::timeout($this->timeout)
+                ->retry($this->retries, 1000)
+                ->get($url, $params);
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                // 快取 10 分鐘
+                Cache::put($cacheKey, $data, now()->addMinutes(10));
+
+                return $data;
+            }
+
+            Log::warning("TWSE OpenAPI 回應非成功狀態", [
+                'status' => $response->status(),
+                'body' => $response->body()
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error("TWSE OpenAPI 請求失敗", [
+                'error' => $e->getMessage(),
+                'url' => $url,
+                'params' => $params
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * 從標題中提取股票名稱
+     * 
+     * @param string $title
+     * @return string
+     */
+    protected function extractStockName(string $title): string
+    {
+        // 標題格式: "114年11月 2317 鴻海 各日成交資訊"
+        if (preg_match('/\d{4}\s+(.+?)\s+各日成交資訊/', $title, $matches)) {
+            return trim($matches[1]);
+        }
+
+        return '';
+    }
+
+    /**
+     * 清理股票代碼 (移除空白和特殊字符)
+     * 
+     * @param string $symbol
+     * @return string
+     */
+    protected function cleanSymbol(string $symbol): string
+    {
+        return trim(str_replace([' ', '　'], '', $symbol));
+    }
+
+    /**
+     * 清理股票名稱 (移除空白)
+     * 
+     * @param string $name
+     * @return string
+     */
+    protected function cleanStockName(string $name): string
+    {
+        return trim($name);
+    }
+
+    /**
+     * 解析民國日期格式
+     * 
+     * @param string $rocDate 民國日期 (例如: 113/11/05)
+     * @return string 西元日期 (Y-m-d)
+     */
+    protected function parseROCDate(string $rocDate): string
+    {
+        // 格式: 113/11/05 -> 2024-11-05
+        $parts = explode('/', $rocDate);
+        
+        if (count($parts) === 3) {
+            $year = (int)$parts[0] + 1911;  // 民國轉西元
+            $month = str_pad($parts[1], 2, '0', STR_PAD_LEFT);
+            $day = str_pad($parts[2], 2, '0', STR_PAD_LEFT);
+            
+            return "{$year}-{$month}-{$day}";
+        }
+
+        return $rocDate;
+    }
+
+    /**
+     * 格式化 TWSE 日期為標準格式
+     * 
+     * @param string $date Ymd 格式
+     * @return string Y-m-d 格式
+     */
+    protected function formatDateFromTWSE(string $date): string
+    {
+        // 20251105 -> 2025-11-05
+        if (strlen($date) === 8) {
+            return substr($date, 0, 4) . '-' . substr($date, 4, 2) . '-' . substr($date, 6, 2);
+        }
+
+        return $date;
+    }
+
+    /**
+     * 解析數字 (移除逗號)
+     * 
+     * @param mixed $value
+     * @return float
+     */
+    protected function parseNumber($value): float
+    {
+        if (!$value || $value === '--' || $value === 'X' || $value === '-') {
             return 0;
         }
 
-        // 移除逗號和其他非數字字符
-        $cleaned = str_replace(',', '', $value);
+        // 移除逗號和其他非數字字符(保留小數點和負號)
+        $cleaned = preg_replace('/[^0-9.-]/', '', $value);
 
         return floatval($cleaned);
     }
 
     /**
      * 解析價格
+     * 
+     * @param mixed $value
+     * @return float|null
      */
-    protected function parsePrice($value)
+    protected function parsePrice($value): ?float
     {
-        if (!$value || $value === '--' || $value === 'X' || $value === '-') {
+        if (!$value || $value === '--' || $value === 'X' || $value === '-' || $value === '') {
             return null;
         }
 
-        // 處理正負號
-        $value = str_replace(['+', '<', '>'], '', $value);
+        // 處理正負號和特殊字符
+        $value = str_replace(['+', '<', '>',  ' '], '', $value);
 
         return $this->parseNumber($value);
     }
 
     /**
      * 檢查特定日期是否有資料
+     * 
+     * @param string $symbol
+     * @param string|null $date
+     * @return bool
      */
-    public function checkDataAvailable($symbol, $date = null)
+    public function checkDataAvailable(string $symbol, ?string $date = null): bool
     {
         $data = $this->getStockDay($symbol);
         

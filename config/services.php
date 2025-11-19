@@ -40,10 +40,9 @@ return [
     */
     'twse' => [
         'base_url' => env('TWSE_BASE_URL', 'https://www.twse.com.tw'),
+        'openapi_base_url' => env('TWSE_OPENAPI_BASE_URL', 'https://openapi.twse.com.tw/v1'),
         'timeout' => env('TWSE_TIMEOUT', 30),
         'retries' => env('TWSE_RETRIES', 3),
-        'cache_ttl' => env('TWSE_CACHE_TTL', 600), // 快取時間 (秒)
-        'delay_between_requests' => env('TWSE_DELAY', 500), // 請求間隔 (毫秒)
     ],
 
     /*
