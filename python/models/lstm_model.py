@@ -6,11 +6,17 @@ LSTM 股價預測模型
 
 import sys
 import json
+import os
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
+
+# 設定環境變數避免 Windows asyncio 問題
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+os.environ['NO_PROXY'] = '*'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 減少 TensorFlow 輸出
 
 # 機器學習相關套件
 from sklearn.preprocessing import MinMaxScaler
@@ -222,13 +228,24 @@ def main():
             }))
             sys.exit(1)
 
-        input_data = json.loads(sys.argv[1])
+        # 支援兩種輸入方式：直接 JSON 或檔案路徑
+        input_arg = sys.argv[1]
+
+        # 檢查是否為檔案路徑
+        if os.path.exists(input_arg):
+            with open(input_arg, 'r', encoding='utf-8') as f:
+                input_data = json.load(f)
+        else:
+            # 嘗試直接解析 JSON
+            input_data = json.loads(input_arg)
 
         # 解析參數
         prices = np.array(input_data['prices'])
         prediction_days = input_data.get('prediction_days', 7)
         epochs = input_data.get('epochs', 100)
         units = input_data.get('units', 128)
+        lookback = input_data.get('lookback', 60)
+        dropout = input_data.get('dropout', 0.2)
 
         # 檢查資料長度
         if len(prices) < 100:
@@ -240,8 +257,9 @@ def main():
 
         # 建立並訓練模型
         predictor = LSTMPredictor(
-            lookback=60,
+            lookback=lookback,
             units=units,
+            dropout=dropout,
             epochs=epochs
         )
 

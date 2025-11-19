@@ -1,96 +1,67 @@
 <template>
-  <div class="prediction-page">
+  <v-container class="prediction-page">
     <v-row>
       <v-col cols="12">
-        <v-card elevation="2">
-          <v-card-title>
-            <v-icon class="mr-2">mdi-chart-line</v-icon>
-            明日收盤價預測
-            <v-spacer></v-spacer>
-            <v-btn
-              color="primary"
-              prepend-icon="mdi-play"
-              @click="runPrediction"
-              :loading="loading"
-              :disabled="!canPredict"
-              size="large"
-            >
-              執行預測
-            </v-btn>
+        <v-card elevation="3">
+          <v-card-title class="text-h4 font-weight-bold primary--text">
+            預測分析系統
           </v-card-title>
 
-          <v-card-text>
-            <!-- 步驟 1：選擇標的類型 -->
-            <v-row class="mb-4">
-              <v-col cols="12">
-                <div class="text-h6 mb-3">步驟 1：選擇標的類型</div>
-                <v-btn-toggle
+          <v-card-subtitle>
+            使用 LSTM、ARIMA、GARCH 模型預測股價走勢
+          </v-card-subtitle>
+
+          <v-card-text class="pa-6">
+            <!-- 步驟 1: 選擇預測目標 -->
+            <v-row align="center" class="mb-4">
+              <v-col cols="12" md="12">
+                <div class="text-h6 mb-3">步驟 1:選擇預測目標</div>
+              </v-col>
+
+              <v-col cols="12" md="6">
+                <v-radio-group
                   v-model="targetType"
-                  color="primary"
-                  mandatory
-                  divided
-                  class="mb-4"
+                  row
+                  hide-details
+                  class="mt-0"
                 >
-                  <v-btn value="stock" size="large">
-                    <v-icon start>mdi-chart-line-variant</v-icon>
-                    股票
-                  </v-btn>
-                  <v-btn value="option" size="large">
-                    <v-icon start>mdi-chart-bell-curve</v-icon>
-                    選擇權 (TXO)
-                  </v-btn>
-                </v-btn-toggle>
+                  <v-radio
+                    label="TXO 市場指數"
+                    value="market"
+                    color="primary"
+                  ></v-radio>
+                  <v-radio
+                    label="個股"
+                    value="stock"
+                    color="primary"
+                  ></v-radio>
+                </v-radio-group>
               </v-col>
-            </v-row>
 
-            <!-- 步驟 2：選擇具體標的（只有股票需要） -->
-            <v-row v-if="targetType === 'stock'" class="mb-4">
-              <v-col cols="12">
-                <div class="text-h6 mb-3">步驟 2：選擇股票</div>
+              <v-col cols="12" md="6" v-if="targetType === 'stock'">
                 <v-autocomplete
-                  v-model="selectedStock"
-                  :items="stocksList"
-                  :loading="loadingStocks"
-                  item-title="display_name"
-                  item-value="id"
-                  label="選擇股票"
-                  placeholder="輸入股票代碼或名稱搜尋..."
-                  density="comfortable"
-                  clearable
-                >
-                  <template v-slot:prepend-inner>
-                    <v-icon color="primary">mdi-chart-line-variant</v-icon>
-                  </template>
-                  <template v-slot:item="{ props, item }">
-                    <v-list-item v-bind="props">
-                      <template v-slot:title>
-                        {{ item.raw.symbol }} {{ item.raw.name }}
-                      </template>
-                      <template v-slot:subtitle>
-                        最新價格: ${{ item.raw.latest_price || '---' }}
-                      </template>
-                    </v-list-item>
-                  </template>
-                </v-autocomplete>
+                    v-model="selectedStock"
+                    :items="stocksList"
+                    :loading="loadingStocks"
+                    item-title="display"
+                    item-value="value"
+                    label="選擇股票"
+                    placeholder="輸入股票代碼或名稱"
+                    outlined
+                    dense
+                    clearable
+                    no-data-text="目前沒有可用的股票資料"
+                    @update:search="searchStocks"
+                />
               </v-col>
             </v-row>
 
-            <!-- TXO 說明（選擇權時顯示） -->
-            <v-row v-if="targetType === 'option'" class="mb-4">
-              <v-col cols="12">
-                <v-alert type="info" variant="tonal" class="mb-0">
-                  <v-alert-title>
-                    台指選擇權 (TXO) 預測
-                  </v-alert-title>
-                  系統將使用 TXO 整體歷史資料，預測明日台指選擇權指數價格
-                </v-alert>
-              </v-col>
-            </v-row>
+            <v-divider class="my-4"></v-divider>
 
-            <!-- 步驟 3：選擇模型和參數 -->
-            <v-row class="mb-4">
+            <!-- 步驟 2: 模型設定 -->
+            <v-row align="center" class="mb-4">
               <v-col cols="12">
-                <div class="text-h6 mb-3">步驟 {{ targetType === 'stock' ? '3' : '2' }}：模型設定</div>
+                <div class="text-h6 mb-3">步驟 2:模型設定</div>
               </v-col>
 
               <v-col cols="12" md="4">
@@ -100,180 +71,94 @@
                   item-title="text"
                   item-value="value"
                   label="預測模型"
-                  density="comfortable"
+                  outlined
+                  dense
                 >
-                  <template v-slot:prepend-inner>
-                    <v-icon color="primary">mdi-brain</v-icon>
-                  </template>
                   <template v-slot:item="{ props, item }">
                     <v-list-item v-bind="props">
-                      <template v-slot:subtitle>
+                      <v-list-item-subtitle>
                         {{ item.raw.description }}
-                      </template>
+                      </v-list-item-subtitle>
                     </v-list-item>
                   </template>
                 </v-select>
               </v-col>
 
               <v-col cols="12" md="3">
-                <v-select
-                  v-model="trainingPeriod"
-                  :items="[100, 150, 200]"
-                  label="訓練期間"
-                  density="comfortable"
+                <v-text-field
+                  v-model.number="predictionDays"
+                  label="預測天數"
+                  type="number"
+                  min="1"
+                  max="30"
+                  outlined
+                  dense
                   suffix="天"
-                >
-                  <template v-slot:prepend-inner>
-                    <v-icon color="primary">mdi-calendar</v-icon>
-                  </template>
-                </v-select>
+                ></v-text-field>
+              </v-col>
+
+              <v-col cols="12" md="3">
+                <v-text-field
+                  v-model.number="trainingPeriod"
+                  label="訓練期間"
+                  type="number"
+                  min="60"
+                  max="365"
+                  outlined
+                  dense
+                  suffix="天"
+                ></v-text-field>
               </v-col>
 
               <v-col cols="12" md="2">
                 <v-btn
-                  color="grey-darken-1"
-                  block
-                  prepend-icon="mdi-cog"
-                  @click="showParametersDialog = true"
-                  variant="outlined"
-                  height="40"
-                >
-                  進階設定
-                </v-btn>
-              </v-col>
-            </v-row>
-
-            <!-- 預測結果卡片 -->
-            <v-row v-if="predictionResult" class="mt-2">
-              <v-col cols="12">
-                <v-card elevation="4" class="prediction-result-card">
-                  <v-card-text class="pa-6">
-                    <!-- 標的資訊 -->
-                    <div class="d-flex align-center mb-4">
-                      <v-chip
-                        :color="targetType === 'stock' ? 'primary' : 'success'"
-                        size="large"
-                        class="mr-3"
-                      >
-                        {{ targetType === 'stock' ? '股票' : 'TXO' }}
-                      </v-chip>
-                      <div>
-                        <div class="text-h6">{{ getTargetName() }}</div>
-                        <div class="text-caption text-grey">
-                          {{ getTargetInfo() }}
-                        </div>
-                      </div>
-                    </div>
-
-                    <v-divider class="my-4"></v-divider>
-
-                    <!-- 價格預測 -->
-                    <v-row align="center" class="my-4">
-                      <!-- 今日收盤價 -->
-                      <v-col cols="12" md="5">
-                        <v-card color="grey-lighten-4" flat class="pa-4 text-center">
-                          <div class="text-caption text-grey-darken-1 mb-1">今日收盤價</div>
-                          <div class="text-h4 font-weight-bold text-grey-darken-3">
-                            ${{ currentPrice }}
-                          </div>
-                          <div class="text-caption text-grey mt-1">
-                            {{ predictionResult.current_date }}
-                          </div>
-                        </v-card>
-                      </v-col>
-
-                      <!-- 箭頭 -->
-                      <v-col cols="12" md="2" class="text-center">
-                        <v-icon size="48" :color="getPredictionColor()">
-                          mdi-arrow-right-thick
-                        </v-icon>
-                        <div class="text-caption text-grey mt-2">預測</div>
-                      </v-col>
-
-                      <!-- 明日預測價格 -->
-                      <v-col cols="12" md="5">
-                        <v-card :color="getPredictionColor()" dark flat class="pa-4 text-center">
-                          <div class="text-caption mb-1" style="opacity: 0.9">明日預測收盤價</div>
-                          <div class="text-h4 font-weight-bold">
-                            ${{ predictedPrice }}
-                          </div>
-                          <div class="text-h6 mt-2">
-                            <v-icon size="20">
-                              {{ getPredictionChange() >= 0 ? 'mdi-trending-up' : 'mdi-trending-down' }}
-                            </v-icon>
-                            {{ getPredictionChange() >= 0 ? '+' : '' }}{{ getPredictionChange() }}%
-                          </div>
-                        </v-card>
-                      </v-col>
-                    </v-row>
-
-                    <v-divider class="my-4"></v-divider>
-
-                    <!-- 信賴區間 -->
-                    <div class="text-center">
-                      <div class="text-caption text-grey mb-2">
-                        95% 信賴區間
-                      </div>
-                      <div class="text-h6 text-grey-darken-2">
-                        ${{ confidenceLower }} ~ ${{ confidenceUpper }}
-                      </div>
-                      <div class="text-caption text-grey mt-1">
-                        預測價格有 95% 機率落在此區間
-                      </div>
-                    </div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-            </v-row>
-
-            <!-- 歷史走勢圖（可選顯示） -->
-            <v-row v-if="predictionResult && showChart" class="mt-4">
-              <v-col cols="12">
-                <v-card outlined>
-                  <v-card-title class="d-flex justify-space-between align-center">
-                    <span>價格走勢</span>
-                    <v-chip size="small" :color="getModelColor(selectedModel)">
-                      {{ getModelName(selectedModel) }} 模型
-                    </v-chip>
-                  </v-card-title>
-                  <v-card-text>
-                    <canvas ref="predictionChart" height="300"></canvas>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-            </v-row>
-
-            <!-- 顯示圖表按鈕 -->
-            <v-row v-if="predictionResult" class="mt-2">
-              <v-col cols="12" class="text-center">
-                <v-btn
-                  @click="showChart = !showChart"
-                  variant="text"
-                  prepend-icon="mdi-chart-line"
                   color="primary"
+                  @click="showParametersDialog = true"
+                  outlined
+                  block
                 >
-                  {{ showChart ? '隱藏' : '顯示' }}歷史走勢圖
+                  <v-icon>mdi-cog</v-icon>
+                  進階
                 </v-btn>
               </v-col>
             </v-row>
 
-            <!-- 空狀態 -->
-            <v-row v-if="!predictionResult && !loading">
+            <v-divider class="my-4"></v-divider>
+
+            <!-- 步驟 3: 執行預測 -->
+            <v-row>
               <v-col cols="12">
-                <v-card outlined class="text-center pa-12">
-                  <v-icon size="80" color="grey-lighten-2">mdi-chart-timeline-variant</v-icon>
-                  <div class="text-h5 mt-4 text-grey-darken-1">
-                    {{ targetType === 'stock' ? '選擇股票並執行預測' : '執行 TXO 預測' }}
-                  </div>
-                  <div class="text-body-2 text-grey mt-2">
-                    系統將分析歷史價格資料，預測明日可能的收盤價
-                  </div>
-                </v-card>
+                <div class="text-h6 mb-3">步驟 3:執行預測</div>
+              </v-col>
+
+              <v-col cols="12">
+                <v-btn
+                    color="primary"
+                    @click="runPrediction"
+                    :disabled="!canPredict"
+                    x-large
+                    block
+                    elevation="3"
+                >
+                <v-icon left>mdi-robot</v-icon>
+                    執行 {{ selectedModel.toUpperCase() }} 預測
+                </v-btn>
               </v-col>
             </v-row>
 
-            <!-- 載入狀態 -->
-            <v-row v-if="loading">
+            <!-- 錯誤訊息 -->
+            <v-alert
+              v-if="error"
+              type="error"
+              dismissible
+              @input="error = null"
+              class="mt-6"
+            >
+              {{ error }}
+            </v-alert>
+
+            <!-- 載入狀態 - 修正:只顯示一個載入動畫 -->
+            <v-row v-if="loading" class="mt-6">
               <v-col cols="12">
                 <v-card outlined class="text-center pa-12">
                   <v-progress-circular
@@ -282,9 +167,9 @@
                     size="64"
                     width="6"
                   ></v-progress-circular>
-                  <div class="text-h6 mt-4">正在分析歷史資料...</div>
+                  <div class="text-h6 mt-4">正在執行 {{ selectedModel.toUpperCase() }} 模型訓練與預測...</div>
                   <div class="text-caption text-grey mt-2">
-                    使用 {{ getModelName(selectedModel) }} 模型預測明日收盤價（約需 30-60 秒）
+                    使用 {{ trainingPeriod }} 天歷史資料進行訓練,預計需要 30-60 秒
                   </div>
                   <v-progress-linear
                     indeterminate
@@ -294,371 +179,465 @@
                 </v-card>
               </v-col>
             </v-row>
+
+            <!-- 預測結果 -->
+            <v-expand-transition>
+              <v-card v-if="predictionResult && !loading" class="mt-6" elevation="4">
+                <v-card-title class="primary white--text">
+                  預測結果
+                </v-card-title>
+
+                <v-card-text class="pa-6">
+                  <!-- 目標資訊 -->
+                  <v-row>
+                    <v-col cols="12">
+                      <v-chip
+                        :color="targetType === 'market' ? 'success' : 'primary'"
+                        label
+                        large
+                      >
+                        {{ targetType === 'market' ? 'TXO 市場指數' : '個股' }}
+                      </v-chip>
+                      <span class="ml-3 text-h6">
+                        {{ predictionResult.target_info?.name || predictionResult.target_info?.underlying }}
+                      </span>
+                    </v-col>
+                  </v-row>
+
+                  <!-- 價格預測 -->
+                  <v-row class="mt-6">
+                    <v-col cols="12" md="6">
+                      <v-card color="grey lighten-4" flat>
+                        <v-card-text class="text-center">
+                          <div class="text-caption">今日收盤價</div>
+                          <div class="text-h3 font-weight-bold">
+                            ${{ currentPrice }}
+                          </div>
+                          <div class="text-caption">{{ formatDate(predictionResult.current_date) }}</div>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+
+                    <v-col cols="12" md="6">
+                      <v-card
+                        :color="predictedChange >= 0 ? 'success' : 'error'"
+                        dark
+                        flat
+                      >
+                        <v-card-text class="text-center">
+                          <div class="text-caption">明日預測價格</div>
+                          <div class="text-h3 font-weight-bold">
+                            ${{ predictedPrice }}
+                          </div>
+                          <div class="text-h6">
+                            {{ predictedChange >= 0 ? '▲' : '▼' }}
+                            {{ Math.abs(predictedChange).toFixed(2) }}%
+                          </div>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+
+                  <!-- 信賴區間 -->
+                  <v-row class="mt-4">
+                    <v-col cols="12">
+                      <v-card outlined>
+                        <v-card-text class="text-center">
+                          <div class="text-subtitle-1">95% 信賴區間</div>
+                          <div class="text-h5 mt-2">
+                            ${{ confidenceLower }} ~ ${{ confidenceUpper }}
+                          </div>
+                        </v-card-text>
+                      </v-card>
+                    </v-col>
+                  </v-row>
+
+                  <!-- 模型指標 -->
+                  <v-row class="mt-4" v-if="predictionResult.metrics">
+                    <v-col cols="12">
+                      <v-simple-table>
+                        <tbody>
+                          <tr>
+                            <td>模型類型</td>
+                            <td class="text-right">{{ predictionResult.model_type?.toUpperCase() }}</td>
+                          </tr>
+                          <tr v-if="predictionResult.metrics.final_loss">
+                            <td>最終損失 (Loss)</td>
+                            <td class="text-right">{{ predictionResult.metrics.final_loss.toFixed(6) }}</td>
+                          </tr>
+                          <tr v-if="predictionResult.metrics.final_mae">
+                            <td>平均絕對誤差 (MAE)</td>
+                            <td class="text-right">{{ predictionResult.metrics.final_mae.toFixed(4) }}</td>
+                          </tr>
+                          <tr v-if="predictionResult.metrics.epochs_trained">
+                            <td>訓練輪數</td>
+                            <td class="text-right">{{ predictionResult.metrics.epochs_trained }}</td>
+                          </tr>
+                        </tbody>
+                      </v-simple-table>
+                    </v-col>
+                  </v-row>
+
+                  <!-- 圖表按鈕 -->
+                  <v-row class="mt-4">
+                    <v-col cols="12" class="text-center">
+                      <v-btn
+                        @click="showChart = !showChart"
+                        color="primary"
+                        outlined
+                      >
+                        <v-icon left>mdi-chart-line</v-icon>
+                        {{ showChart ? '隱藏' : '顯示' }}歷史走勢圖
+                      </v-btn>
+                    </v-col>
+                  </v-row>
+
+                  <!-- 圖表 -->
+                  <v-expand-transition>
+                    <v-row v-if="showChart" class="mt-4">
+                      <v-col cols="12">
+                        <canvas ref="predictionChart" height="300"></canvas>
+                      </v-col>
+                    </v-row>
+                  </v-expand-transition>
+                </v-card-text>
+              </v-card>
+            </v-expand-transition>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
 
-    <!-- 模型參數調整對話框 -->
-    <v-dialog v-model="showParametersDialog" max-width="600">
+    <!-- 參數設定對話框 -->
+    <v-dialog v-model="showParametersDialog" max-width="600px">
       <v-card>
-        <v-card-title>{{ getModelName(selectedModel) }} 模型參數</v-card-title>
+        <v-card-title>
+          進階參數設定
+        </v-card-title>
         <v-card-text>
-          <template v-if="selectedModel === 'lstm'">
-            <v-slider
-              v-model="modelParameters.lstm.epochs"
-              label="訓練輪數"
-              min="20"
-              max="200"
-              step="10"
-              thumb-label
-              :hint="`目前: ${modelParameters.lstm.epochs} 輪`"
-              persistent-hint
-              class="mb-4"
-            ></v-slider>
-            <v-slider
-              v-model="modelParameters.lstm.units"
-              label="神經元數量"
-              min="64"
-              max="256"
-              step="32"
-              thumb-label
-              :hint="`目前: ${modelParameters.lstm.units}`"
-              persistent-hint
-            ></v-slider>
-          </template>
-          <template v-else-if="selectedModel === 'arima'">
-            <v-switch
-              v-model="modelParameters.arima.auto_select"
-              label="自動選擇最佳參數"
-              color="primary"
-            ></v-switch>
-          </template>
-          <template v-else-if="selectedModel === 'garch'">
-            <v-text-field
-              v-model.number="modelParameters.garch.p"
-              label="GARCH 階數 (p)"
-              type="number"
-              min="1"
-              max="3"
-            ></v-text-field>
-            <v-text-field
-              v-model.number="modelParameters.garch.q"
-              label="ARCH 階數 (q)"
-              type="number"
-              min="1"
-              max="3"
-              class="mt-2"
-            ></v-text-field>
-          </template>
+          <v-row>
+            <v-col cols="12" v-if="selectedModel === 'lstm'">
+              <v-text-field
+                v-model.number="modelParameters.epochs"
+                label="訓練輪數 (Epochs)"
+                type="number"
+                min="10"
+                max="200"
+                outlined
+                dense
+              ></v-text-field>
+              <v-text-field
+                v-model.number="modelParameters.units"
+                label="LSTM 單元數"
+                type="number"
+                min="32"
+                max="256"
+                outlined
+                dense
+              ></v-text-field>
+              <v-text-field
+                v-model.number="modelParameters.lookback"
+                label="回顧期間(天)"
+                type="number"
+                min="30"
+                max="120"
+                outlined
+                dense
+              ></v-text-field>
+            </v-col>
+
+            <v-col cols="12" v-if="selectedModel === 'arima'">
+              <v-text-field
+                v-model.number="modelParameters.p"
+                label="AR 參數 (p)"
+                type="number"
+                min="0"
+                max="5"
+                outlined
+                dense
+              ></v-text-field>
+              <v-text-field
+                v-model.number="modelParameters.d"
+                label="差分階數 (d)"
+                type="number"
+                min="0"
+                max="2"
+                outlined
+                dense
+              ></v-text-field>
+              <v-text-field
+                v-model.number="modelParameters.q"
+                label="MA 參數 (q)"
+                type="number"
+                min="0"
+                max="5"
+                outlined
+                dense
+              ></v-text-field>
+            </v-col>
+
+            <v-col cols="12" v-if="selectedModel === 'garch'">
+              <v-text-field
+                v-model.number="modelParameters.p"
+                label="GARCH 參數 (p)"
+                type="number"
+                min="1"
+                max="3"
+                outlined
+                dense
+              ></v-text-field>
+              <v-text-field
+                v-model.number="modelParameters.q"
+                label="ARCH 參數 (q)"
+                type="number"
+                min="1"
+                max="3"
+                outlined
+                dense
+              ></v-text-field>
+            </v-col>
+          </v-row>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="showParametersDialog = false">確定</v-btn>
+          <v-btn text @click="showParametersDialog = false">取消</v-btn>
+          <v-btn color="primary" @click="showParametersDialog = false">確定</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </div>
+  </v-container>
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import axios from 'axios'
 import Chart from 'chart.js/auto'
 
 export default {
   name: 'PredictionAnalysis',
+
   setup() {
+    // 狀態管理
     const loading = ref(false)
     const loadingStocks = ref(false)
+    const error = ref(null)
     const predictionResult = ref(null)
     const predictionChart = ref(null)
     const showParametersDialog = ref(false)
     const showChart = ref(false)
-    let chartInstance = null
 
-    // 標的類型：stock 或 option
-    const targetType = ref('option')  // 預設選擇權
-
-    // 股票相關
+    // 表單資料
+    const targetType = ref('market')  // 預設選擇市場
     const selectedStock = ref(null)
     const stocksList = ref([])
-
     const selectedModel = ref('lstm')
+    const predictionDays = ref(1)  // 預設預測 1 天
+    const trainingPeriod = ref(180)  // 預設使用 180 天資料
+    const modelParameters = ref({
+      // LSTM 參數
+      epochs: 20,
+      units: 64,
+      lookback: 60,
+      dropout: 0.2,
+      // ARIMA 參數
+      p: null,
+      d: null,
+      q: null,
+      auto_select: true,
+      // GARCH 參數
+      dist: 'normal'
+    })
+
+    // 模型選項
     const models = ref([
-      { text: 'LSTM', value: 'lstm', description: '深度學習 - 準確度高' },
-      { text: 'ARIMA', value: 'arima', description: '統計模型 - 速度快' },
-      { text: 'GARCH', value: 'garch', description: '波動率模型' }
+      { value: 'lstm', text: 'LSTM', description: '長短期記憶神經網路,適合捕捉長期依賴關係' },
+      { value: 'arima', text: 'ARIMA', description: '自回歸移動平均模型,適合時間序列預測' },
+      { value: 'garch', text: 'GARCH', description: '廣義自回歸條件異方差模型,適合波動率預測' }
     ])
 
-    const trainingPeriod = ref(180)
-
-    const modelParameters = ref({
-      lstm: {
-        epochs: 100,
-        units: 128,
-        lookback: 60
-      },
-      arima: {
-        auto_select: true
-      },
-      garch: {
-        p: 1,
-        q: 1
-      }
-    })
+    let chartInstance = null
 
     // 計算屬性
     const canPredict = computed(() => {
-      if (targetType.value === 'stock') {
-        return selectedStock.value !== null
-      } else {
-        return true  // TXO 不需要選擇
+      if (targetType.value === 'market') {
+        return true
       }
+      return selectedStock.value !== null
     })
 
     const currentPrice = computed(() => {
-      if (!predictionResult.value) return '---'
-      return predictionResult.value.current_price?.toFixed(2) || '---'
+      return predictionResult.value?.current_price || 0
     })
 
     const predictedPrice = computed(() => {
-      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
-      return predictionResult.value.predictions[0]?.predicted_price?.toFixed(2) || '---'
+      if (!predictionResult.value?.predictions?.[0]) return 0
+      return predictionResult.value.predictions[0].predicted_price
+    })
+
+    const predictedChange = computed(() => {
+      if (!currentPrice.value || !predictedPrice.value) return 0
+      return ((predictedPrice.value - currentPrice.value) / currentPrice.value * 100)
     })
 
     const confidenceLower = computed(() => {
-      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
-      return predictionResult.value.predictions[0]?.confidence_lower?.toFixed(2) || '---'
+      if (!predictionResult.value?.predictions?.[0]) return 0
+      return predictionResult.value.predictions[0].confidence_lower
     })
 
     const confidenceUpper = computed(() => {
-      if (!predictionResult.value || !predictionResult.value.predictions) return '---'
-      return predictionResult.value.predictions[0]?.confidence_upper?.toFixed(2) || '---'
+      if (!predictionResult.value?.predictions?.[0]) return 0
+      return predictionResult.value.predictions[0].confidence_upper
     })
 
-    // 載入股票列表
+    // 日期格式化函數
+    const formatDate = (dateString) => {
+      if (!dateString) return '---'
+
+      try {
+        const date = new Date(dateString)
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+
+        return `${year}-${month}-${day}`
+      } catch (error) {
+        console.error('日期格式化錯誤:', error)
+        return dateString
+      }
+    }
+
+    // 修正:從資料庫動態載入股票列表並加強去重
     const loadStocks = async () => {
       loadingStocks.value = true
       try {
         const response = await axios.get('/stocks', {
           params: {
-            per_page: 200
+            per_page: 200,
+            has_prices: true  // 只載入有價格資料的股票
           }
         })
 
         if (response.data.success) {
-          stocksList.value = response.data.data.data.map(stock => ({
-            id: stock.id,
-            symbol: stock.symbol,
-            name: stock.name,
-            latest_price: stock.latest_price?.close,
-            display_name: `${stock.symbol} ${stock.name}`
-          }))
+          // 使用 Map 去重(以 symbol 為 key)
+          const stocksMap = new Map()
+
+          response.data.data.data.forEach(stock => {
+            if (stock.symbol && stock.name) {
+              // 只保留第一次出現的股票
+              if (!stocksMap.has(stock.symbol)) {
+                stocksMap.set(stock.symbol, {
+                  symbol: stock.symbol,
+                  name: stock.name,
+                  value: stock.symbol,
+                  display: `${stock.symbol} - ${stock.name}`
+                })
+              }
+            }
+          })
+
+          // 轉換為陣列並排序
+          stocksList.value = Array.from(stocksMap.values()).sort((a, b) => {
+            return a.symbol.localeCompare(b.symbol)
+          })
+
+          console.log('✅ 載入股票列表成功:', stocksList.value.length, '個')
+
+          // 檢查是否有重複
+          const symbols = stocksList.value.map(s => s.symbol)
+          const uniqueSymbols = [...new Set(symbols)]
+          if (symbols.length !== uniqueSymbols.length) {
+            console.warn('⚠️ 警告:檢測到重複的股票代碼')
+          }
         }
-      } catch (error) {
-        console.error('載入股票列表失敗:', error)
-        alert('無法載入股票列表，請檢查 API 連線')
+      } catch (err) {
+        console.error('❌ 載入股票列表失敗:', err)
+        error.value = '無法載入股票列表'
+        stocksList.value = []
       } finally {
         loadingStocks.value = false
       }
     }
 
-    // ========================================
-    // PredictionAnalysis.vue - runPrediction 函數修正
-    // ========================================
+    const searchStocks = (search) => {
+      // 實作股票搜尋邏輯
+      console.log('搜尋股票:', search)
+    }
 
     const runPrediction = async () => {
-    // 驗證
-        if (targetType.value === 'stock' && !selectedStock.value) {
-            alert('請選擇股票')
-            return
+      loading.value = true
+      error.value = null
+      predictionResult.value = null
+
+      try {
+        // 準備請求參數
+        const requestData = {
+          model_type: selectedModel.value,
+          prediction_days: predictionDays.value,
+          parameters: {
+            historical_days: trainingPeriod.value,
+            ...modelParameters.value
+          }
         }
 
-        loading.value = true
-        predictionResult.value = null
-
-        // 🔧 修復 2: 在外層宣告 requestData
-        let requestData = null
-
-        try {
-            // 建立請求資料
-            requestData = {
-                // 只有股票模式才加入 stock_symbol
-                ...(targetType.value === 'stock' && {
-                    stock_symbol: selectedStock.value
-                }),
-
-                // 只有選擇權模式才加入 underlying
-                ...(targetType.value === 'option' && {
-                    underlying: 'TXO'
-                }),
-
-                // 共同參數
-                model_type: selectedModel.value.toLowerCase(),
-                prediction_days: 1,
-                parameters: {
-                    historical_days: trainingPeriod.value,
-                    epochs: modelParameters.value[selectedModel.value]?.epochs || 100,
-                    units: modelParameters.value[selectedModel.value]?.units || 128,
-                    lookback: modelParameters.value[selectedModel.value]?.lookback || 60
-                }
-            }
-
-            console.log('📤 發送請求:', {
-                targetType: targetType.value,
-                requestData: requestData,
-                hasStockSymbol: 'stock_symbol' in requestData,
-                hasUnderlying: 'underlying' in requestData,
-            })
-
-            // 🔧 修復 1: 移除 /api 前綴 (因為 baseURL 已經是 /api)
-            const response = await axios.post('/predictions/run', requestData)
-
-            console.log('📥 收到回應:', response.data)
-
-            if (response.data.success) {
-                predictionResult.value = response.data.data
-
-                if (showChart.value) {
-                    setTimeout(() => {
-                        updateChart()
-                    }, 100)
-                }
-
-                console.log('✅ 預測完成')
-            } else {
-                alert('預測失敗: ' + (response.data.message || '未知錯誤'))
-            }
-
-        } catch (error) {
-            console.error('❌ 預測執行失敗:', error)
-
-            let errorMessage = '預測執行失敗'
-
-            // 處理 422 驗證錯誤
-            if (error.response?.status === 422) {
-                const errors = error.response.data.errors
-
-                if (errors) {
-                    const errorList = Object.entries(errors)
-                        .map(([field, messages]) => {
-                            const fieldNames = {
-                                'stock_symbol': '股票代碼',
-                                'underlying': '標的市場',
-                                'model_type': '模型類型',
-                                'prediction_days': '預測天數'
-                            }
-                            const fieldName = fieldNames[field] || field
-                            return `• ${fieldName}: ${messages.join(', ')}`
-                        })
-                        .join('\n')
-
-                    errorMessage = `參數驗證失敗:\n\n${errorList}`
-                } else {
-                    errorMessage = error.response.data.message || '參數驗證失敗'
-                }
-            }
-            // 處理 405 Method Not Allowed
-            else if (error.response?.status === 405) {
-                errorMessage = 'API 路由錯誤,請檢查後端路由設定'
-                console.error('路由問題:', error.response.data.message)
-            }
-            // 處理 500 伺服器錯誤
-            else if (error.response?.status === 500) {
-                errorMessage = '伺服器內部錯誤'
-
-                if (error.response.data.message) {
-                    errorMessage += '\n\n詳細資訊: ' + error.response.data.message
-                }
-            }
-            // 處理其他錯誤
-            else if (error.response?.data?.message) {
-                errorMessage = error.response.data.message
-            } else {
-                errorMessage = error.message || '未知錯誤'
-            }
-
-            alert(errorMessage)
-
-            // 開發環境顯示詳細資訊
-            console.group('🔍 詳細錯誤')
-            console.log('錯誤:', error)
-            console.log('回應:', error.response?.data)
-            console.log('請求:', requestData)  // ✅ 現在可以存取了
-            console.groupEnd()
-
-        } finally {
-            loading.value = false
+        // 根據目標類型設定參數
+        if (targetType.value === 'market') {
+          requestData.underlying = 'TXO'
+        } else {
+          requestData.stock_symbol = selectedStock.value
         }
-    }
 
-    const getPredictionChange = () => {
-      if (!predictionResult.value || !predictionResult.value.current_price) return 0
-      const current = predictionResult.value.current_price
-      const predicted = parseFloat(predictedPrice.value)
-      if (isNaN(predicted) || current === 0) return 0
-      return ((predicted - current) / current * 100).toFixed(2)
-    }
+        console.log('發送預測請求:', requestData)
 
-    const getPredictionColor = () => {
-      const change = parseFloat(getPredictionChange())
-      if (change > 0) return 'success'
-      if (change < 0) return 'error'
-      return 'warning'
-    }
+        // 呼叫 API
+        const response = await axios.post('/predictions/run', requestData)
 
-    const getTargetName = () => {
-      if (targetType.value === 'stock' && predictionResult.value) {
-        return predictionResult.value.target_info?.name || '股票'
+        console.log('預測回應:', response.data)
+
+        if (response.data.success) {
+          predictionResult.value = response.data.data
+
+          // 更新圖表
+          await nextTick()
+          if (showChart.value) {
+            updateChart()
+          }
+        } else {
+          error.value = response.data.message || '預測失敗'
+        }
+      } catch (err) {
+        console.error('預測錯誤:', err)
+        error.value = err.response?.data?.message || '執行預測時發生錯誤'
+      } finally {
+        loading.value = false
       }
-      return '台指選擇權 (TXO)'
-    }
-
-    const getTargetInfo = () => {
-      if (targetType.value === 'stock' && predictionResult.value) {
-        return `代碼: ${predictionResult.value.target_info?.symbol || '---'}`
-      }
-      return '台灣期貨交易所 - 加權指數選擇權'
-    }
-
-    const getModelColor = (model) => {
-      const colors = {
-        'lstm': 'primary',
-        'arima': 'success',
-        'garch': 'warning'
-      }
-      return colors[model] || 'grey'
-    }
-
-    const getModelName = (model) => {
-      const names = {
-        'lstm': 'LSTM',
-        'arima': 'ARIMA',
-        'garch': 'GARCH'
-      }
-      return names[model] || model.toUpperCase()
     }
 
     const updateChart = () => {
       if (!predictionChart.value || !predictionResult.value) return
 
+      // 銷毀舊圖表
       if (chartInstance) {
         chartInstance.destroy()
       }
 
       const ctx = predictionChart.value.getContext('2d')
+
+      // 準備歷史資料
       const historicalData = predictionResult.value.historical_prices || []
       const predictions = predictionResult.value.predictions || []
 
-      const historicalDates = historicalData.map(item => item.date || item.trade_date)
-      const historicalPrices = historicalData.map(item => item.close)
-      const predictionDates = predictions.map(item => item.target_date)
-      const predictionPrices = predictions.map(item => item.predicted_price)
+      // 合併資料
+      const allDates = [
+        ...historicalData.slice(-30).map(d => formatDate(d.date)),
+        ...predictions.map(p => formatDate(p.target_date))
+      ]
 
-      const allDates = [...historicalDates, ...predictionDates]
-      const historicalFull = [...historicalPrices, ...new Array(predictions.length).fill(null)]
-      const predictionFull = [...new Array(historicalData.length).fill(null), ...predictionPrices]
+      const historicalPrices = historicalData.slice(-30).map(d => d.close)
+      const predictionPrices = new Array(historicalPrices.length).fill(null)
+
+      // 連接最後一個歷史價格到預測
+      predictionPrices[predictionPrices.length - 1] = historicalPrices[historicalPrices.length - 1]
+      predictionPrices.push(...predictions.map(p => p.predicted_price))
 
       chartInstance = new Chart(ctx, {
         type: 'line',
@@ -667,17 +646,17 @@ export default {
           datasets: [
             {
               label: '歷史收盤價',
-              data: historicalFull,
+              data: [...historicalPrices, ...new Array(predictions.length).fill(null)],
               borderColor: 'rgb(75, 192, 192)',
-              backgroundColor: 'rgba(75, 192, 192, 0.1)',
+              backgroundColor: 'rgba(75, 192, 192, 0.2)',
               tension: 0.1,
               pointRadius: 2
             },
             {
-              label: '預測收盤價',
-              data: predictionFull,
+              label: '預測價格',
+              data: predictionPrices,
               borderColor: 'rgb(255, 99, 132)',
-              backgroundColor: 'rgba(255, 99, 132, 0.1)',
+              backgroundColor: 'rgba(255, 99, 132, 0.2)',
               borderDash: [5, 5],
               tension: 0.1,
               pointRadius: 4
@@ -690,63 +669,74 @@ export default {
           plugins: {
             legend: {
               display: true
+            },
+            title: {
+              display: true,
+              text: '價格走勢與預測'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: false
             }
           }
         }
       })
     }
 
-    // 監聽類型變化，清空結果
-    watch(targetType, () => {
-      predictionResult.value = null
-      selectedStock.value = null
-    })
-
-    watch(showChart, (newValue) => {
-      if (newValue && predictionResult.value) {
-        setTimeout(() => {
-          updateChart()
-        }, 100)
-      }
-    })
-
+    // 生命週期
     onMounted(() => {
       loadStocks()
     })
 
-    onUnmounted(() => {
-      if (chartInstance) {
-        chartInstance.destroy()
+    // 監聽
+    watch(targetType, () => {
+      predictionResult.value = null
+      error.value = null
+    })
+
+    watch(showChart, (newValue) => {
+      if (newValue && predictionResult.value) {
+        nextTick(() => {
+          updateChart()
+        })
       }
     })
 
     return {
+      // 狀態
       loading,
       loadingStocks,
+      error,
       predictionResult,
       predictionChart,
       showParametersDialog,
       showChart,
+
+      // 表單
       targetType,
       selectedStock,
       stocksList,
       selectedModel,
-      models,
+      predictionDays,
       trainingPeriod,
       modelParameters,
+      models,
+
+      // 計算屬性
       canPredict,
       currentPrice,
       predictedPrice,
+      predictedChange,
       confidenceLower,
       confidenceUpper,
+
+      // 方法
+      formatDate,
       loadStocks,
+      searchStocks,
       runPrediction,
-      getPredictionChange,
-      getPredictionColor,
-      getTargetName,
-      getTargetInfo,
-      getModelColor,
-      getModelName
+      updateChart
     }
   }
 }
@@ -754,10 +744,8 @@ export default {
 
 <style scoped>
 .prediction-page {
-  padding: 16px;
-}
-
-.prediction-result-card {
-  border-left: 4px solid #1976d2;
+  padding: 20px;
+  background-color: #f5f5f5;
+  min-height: 100vh;
 }
 </style>
