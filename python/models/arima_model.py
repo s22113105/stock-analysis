@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 ARIMA 股價預測模型
 用於時間序列分析與預測
@@ -14,10 +14,11 @@ warnings.filterwarnings('ignore')
 
 # 統計模型相關套件
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.stattools import adfuller, acf, pacf
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import adfuller
 from pmdarima import auto_arima
 import scipy.stats as stats
+from scipy.stats import skew, kurtosis
+import traceback
 
 class ARIMAPredictor:
     """ARIMA 預測模型類別"""
@@ -120,7 +121,7 @@ class ARIMAPredictor:
             'aic': aic,
             'bic': bic,
             'stationarity': stationarity_test,
-            'params': self.fitted_model.params.to_dict()
+            'params': {name: float(value) for name, value in zip(self.fitted_model.param_names, self.fitted_model.params)}
         }
 
     def predict(self, steps=7):
@@ -136,22 +137,18 @@ class ARIMAPredictor:
         if self.fitted_model is None:
             raise ValueError("模型尚未訓練")
 
-        # 進行預測
-        forecast = self.fitted_model.forecast(steps=steps)
+        # 使用 get_forecast 取得完整的預測結果
+        forecast_result = self.fitted_model.get_forecast(steps=steps)
 
-        # 取得預測區間
-        forecast_df = pd.DataFrame({
-            'forecast': forecast
-        })
-
-        # 計算預測標準誤
-        forecast_se = self.fitted_model.get_forecast(steps=steps).se_mean
+        # 取得預測值和標準誤
+        forecast_values = forecast_result.predicted_mean
+        forecast_se_values = forecast_result.se_mean
 
         predictions = []
         for i in range(steps):
             predictions.append({
-                'predicted': float(forecast.iloc[i]),
-                'std_error': float(forecast_se[i]) if i < len(forecast_se) else 0
+                'predicted': float(forecast_values[i]),
+                'std_error': float(forecast_se_values[i])
             })
 
         return predictions
@@ -195,15 +192,23 @@ class ARIMAPredictor:
         residuals = self.fitted_model.resid
 
         # Ljung-Box 測試（檢查殘差自相關）
-        ljung_box = self.fitted_model.test_serial_correlation('ljungbox')
+        try:
+            ljung_box = self.fitted_model.test_serial_correlation('ljungbox')
+            # ljung_box 是一個數組,取最後一個 p-value
+            if len(ljung_box) > 0:
+                ljung_box_pvalue = float(ljung_box[-1, 1])  # 取最後一行的 p-value
+            else:
+                ljung_box_pvalue = None
+        except:
+            ljung_box_pvalue = None
 
         # 計算殘差統計量
         diagnostics = {
-            'residual_mean': float(residuals.mean()),
-            'residual_std': float(residuals.std()),
-            'residual_skew': float(residuals.skew()),
-            'residual_kurt': float(residuals.kurt()),
-            'ljung_box_pvalue': float(ljung_box[0, 1]) if len(ljung_box) > 0 else None
+            'residual_mean': float(np.mean(residuals)),
+            'residual_std': float(np.std(residuals)),
+            'residual_skew': float(skew(residuals)),
+            'residual_kurt': float(kurtosis(residuals)),
+            'ljung_box_pvalue': ljung_box_pvalue
         }
 
         return diagnostics
@@ -211,7 +216,7 @@ class ARIMAPredictor:
 def main():
     """主函數"""
     try:
-        # ✅ 修正:從檔案讀取輸入資料
+        # 從檔案讀取輸入資料
         if len(sys.argv) < 2:
             print(json.dumps({
                 'success': False,
@@ -223,10 +228,8 @@ def main():
         input_file = sys.argv[1]
 
         # 讀取檔案內容
-        with open(input_file, 'r', encoding='utf-8') as f:
-            input_data = json.load(f)
-
-        # 解析參數
+        with open(input_file, 'r', encoding='utf-8-sig') as f:
+            input_data = json.load(f)# 解析參數
         prices = np.array(input_data['prices'])
         prediction_days = input_data.get('prediction_days', 7)
 
@@ -242,24 +245,12 @@ def main():
                 'success': False,
                 'error': '資料不足,至少需要30天的歷史資料'
             }))
-            sys.exit(1)
-
-        # 建立預測器
-        predictor = ARIMAPredictor(p=p, d=d, q=q, auto_select=auto_select)
-
-        # 訓練模型
-        model_info = predictor.train(prices)
-
-        # 進行預測
-        predictions = predictor.predict(steps=prediction_days)
-
-        # 計算信賴區間
-        intervals = predictor.calculate_confidence_intervals(predictions)
-
-        # 模型診斷
-        diagnostics = predictor.model_diagnostics()
-
-        # 建立預測日期
+            sys.exit(1)# 建立預測器
+        predictor = ARIMAPredictor(p=p, d=d, q=q, auto_select=auto_select)# 訓練模型
+        model_info = predictor.train(prices)# 進行預測
+        predictions = predictor.predict(steps=prediction_days)# 計算信賴區間
+        intervals = predictor.calculate_confidence_intervals(predictions)# 模型診斷
+        diagnostics = predictor.model_diagnostics()# 建立預測日期
         base_date = datetime.strptime(input_data['base_date'], '%Y-%m-%d')
         predictions_with_dates = []
 
@@ -271,9 +262,7 @@ def main():
                 'confidence_lower': round(interval['lower'], 2),
                 'confidence_upper': round(interval['upper'], 2),
                 'confidence_level': 0.95
-            })
-
-        # 輸出結果
+            })# 輸出結果
         result = {
             'success': True,
             'predictions': predictions_with_dates,
@@ -289,9 +278,11 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
 
     except Exception as e:
+        import traceback
         print(json.dumps({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }))
         sys.exit(1)
 

@@ -187,13 +187,13 @@ class GARCHPredictor:
             'ljung_box_pvalue': float(lb_test['lb_pvalue'].iloc[-1]),
             'arch_lm_statistic': float(arch_test[0]),
             'arch_lm_pvalue': float(arch_test[1]),
-            'has_volatility_clustering': arch_test[1] < 0.05
+            'has_volatility_clustering': bool(arch_test[1] < 0.05)
         }
 
 def main():
     """主函數"""
     try:
-        # ✅ 修正:從檔案讀取輸入資料
+        # 從檔案讀取輸入資料
         if len(sys.argv) < 2:
             print(json.dumps({
                 'success': False,
@@ -205,7 +205,7 @@ def main():
         input_file = sys.argv[1]
 
         # 讀取檔案內容
-        with open(input_file, 'r', encoding='utf-8') as f:
+        with open(input_file, 'r', encoding='utf-8-sig') as f:
             input_data = json.load(f)
 
         # 解析參數
@@ -254,11 +254,17 @@ def main():
             daily_volatility = vol_pred['volatility'] / 100  # 轉換回小數
             price_std = current_price * daily_volatility * np.sqrt(i + 1)
 
+            # 計算價格區間的中點作為預測價格
+            lower_bound = current_price - 1.96 * price_std
+            upper_bound = current_price + 1.96 * price_std
+            predicted_price = (lower_bound + upper_bound) / 2  # 中點
+
             predictions_with_dates.append({
                 'target_date': target_date.strftime('%Y-%m-%d'),
+                'predicted_price': round(predicted_price, 2),  # 新增此欄位
                 'predicted_volatility': round(vol_pred['volatility'], 4),
-                'price_lower_bound': round(current_price - 1.96 * price_std, 2),
-                'price_upper_bound': round(current_price + 1.96 * price_std, 2),
+                'confidence_lower': round(lower_bound, 2),  # 改名以保持一致性
+                'confidence_upper': round(upper_bound, 2),  # 改名以保持一致性
                 'confidence_level': 0.95
             })
 
