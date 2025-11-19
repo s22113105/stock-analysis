@@ -50,6 +50,7 @@
                   outlined
                   dense
                   clearable
+                  no-data-text="目前沒有可用的股票資料"
                   @update:search="searchStocks"
                 >
                   <template v-slot:item="{ props, item }">
@@ -154,7 +155,7 @@
               </v-col>
             </v-row>
 
-            <!-- 載入中提示 -->
+            <!-- 載入中提示 - 修正:只在執行預測時顯示 -->
             <v-alert
               v-if="loading"
               type="info"
@@ -220,7 +221,8 @@
                           <div class="text-h3 font-weight-bold">
                             ${{ currentPrice }}
                           </div>
-                          <div class="text-caption">{{ predictionResult.current_date }}</div>
+                          <!-- 修正:使用 formatDate 函數 -->
+                          <div class="text-caption">{{ formatDate(predictionResult.current_date) }}</div>
                         </v-card-text>
                       </v-card>
                     </v-col>
@@ -496,14 +498,67 @@ export default {
       return predictionResult.value.predictions[0].confidence_upper
     })
 
-    // 方法
+    // ========================================
+    // 修正 1: 新增日期格式化函數
+    // ========================================
+    const formatDate = (dateString) => {
+      if (!dateString) return '---'
+
+      try {
+        const date = new Date(dateString)
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+
+        return `${year}-${month}-${day}`
+      } catch (error) {
+        console.error('日期格式化錯誤:', error)
+        return dateString
+      }
+    }
+
+    // ========================================
+    // 修正 3: 從資料庫動態載入股票列表並去重
+    // ========================================
     const loadStocks = async () => {
-      // 模擬股票列表，實際應從 API 載入
-      stocksList.value = [
-        { symbol: '2330', name: '台積電', value: '2330', display: '2330 - 台積電' },
-        { symbol: '2317', name: '鴻海', value: '2317', display: '2317 - 鴻海' },
-        { symbol: '2454', name: '聯發科', value: '2454', display: '2454 - 聯發科' }
-      ]
+      loadingStocks.value = true
+      try {
+        const response = await axios.get('/stocks', {
+          params: {
+            per_page: 200,
+            has_prices: true  // 只載入有價格資料的股票
+          }
+        })
+
+        if (response.data.success) {
+          // 使用 Map 去重（以 symbol 為 key）
+          const stocksMap = new Map()
+
+          response.data.data.data.forEach(stock => {
+            if (stock.symbol && stock.name) {
+              stocksMap.set(stock.symbol, {
+                symbol: stock.symbol,
+                name: stock.name,
+                value: stock.symbol,
+                display: `${stock.symbol} - ${stock.name}`
+              })
+            }
+          })
+
+          // 轉換為陣列並排序
+          stocksList.value = Array.from(stocksMap.values()).sort((a, b) => {
+            return a.symbol.localeCompare(b.symbol)
+          })
+
+          console.log('✅ 載入股票列表成功:', stocksList.value.length, '個')
+        }
+      } catch (err) {
+        console.error('❌ 載入股票列表失敗:', err)
+        error.value = '無法載入股票列表'
+        stocksList.value = []
+      } finally {
+        loadingStocks.value = false
+      }
     }
 
     const searchStocks = (search) => {
@@ -576,8 +631,8 @@ export default {
 
       // 合併資料
       const allDates = [
-        ...historicalData.slice(-30).map(d => d.date),
-        ...predictions.map(p => p.target_date)
+        ...historicalData.slice(-30).map(d => formatDate(d.date)),
+        ...predictions.map(p => formatDate(p.target_date))
       ]
 
       const historicalPrices = historicalData.slice(-30).map(d => d.close)
@@ -680,6 +735,7 @@ export default {
       confidenceUpper,
 
       // 方法
+      formatDate,
       loadStocks,
       searchStocks,
       runPrediction,
