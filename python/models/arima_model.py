@@ -14,7 +14,8 @@ warnings.filterwarnings('ignore')
 
 # 統計模型相關套件
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.stattools import adfuller, acf, pacf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from pmdarima import auto_arima
 import scipy.stats as stats
 
@@ -58,7 +59,7 @@ class ARIMAPredictor:
         return is_stationary, {
             'adf_statistic': float(adf_result[0]),
             'p_value': float(adf_result[1]),
-            'critical_values': {k: float(v) for k, v in adf_result[4].items()},
+            'critical_values': adf_result[4],
             'is_stationary': is_stationary
         }
 
@@ -114,17 +115,12 @@ class ARIMAPredictor:
         aic = float(self.fitted_model.aic)
         bic = float(self.fitted_model.bic)
 
-        # Convert params to dict safely
-        params_dict = {}
-        for key in self.fitted_model.params.keys():
-            params_dict[str(key)] = float(self.fitted_model.params[key])
-
         return {
             'order': order,
             'aic': aic,
             'bic': bic,
             'stationarity': stationarity_test,
-            'params': params_dict
+            'params': self.fitted_model.params.to_dict()
         }
 
     def predict(self, steps=7):
@@ -143,15 +139,19 @@ class ARIMAPredictor:
         # 進行預測
         forecast = self.fitted_model.forecast(steps=steps)
 
+        # 取得預測區間
+        forecast_df = pd.DataFrame({
+            'forecast': forecast
+        })
+
         # 計算預測標準誤
-        forecast_obj = self.fitted_model.get_forecast(steps=steps)
-        forecast_se = forecast_obj.se_mean
+        forecast_se = self.fitted_model.get_forecast(steps=steps).se_mean
 
         predictions = []
         for i in range(steps):
             predictions.append({
-                'predicted': float(forecast[i] if isinstance(forecast, np.ndarray) else forecast.iloc[i]),
-                'std_error': float(forecast_se[i])
+                'predicted': float(forecast.iloc[i]),
+                'std_error': float(forecast_se[i]) if i < len(forecast_se) else 0
             })
 
         return predictions
@@ -202,7 +202,7 @@ class ARIMAPredictor:
             'residual_mean': float(residuals.mean()),
             'residual_std': float(residuals.std()),
             'residual_skew': float(residuals.skew()),
-            'residual_kurt': float(residuals.kurtosis()),
+            'residual_kurt': float(residuals.kurt()),
             'ljung_box_pvalue': float(ljung_box[0, 1]) if len(ljung_box) > 0 else None
         }
 
@@ -211,17 +211,19 @@ class ARIMAPredictor:
 def main():
     """主函數"""
     try:
-        # 從命令列參數讀取輸入
+        # ✅ 修正:從檔案讀取輸入資料
         if len(sys.argv) < 2:
             print(json.dumps({
                 'success': False,
-                'error': '請提供輸入資料'
+                'error': '請提供輸入資料檔案路徑'
             }))
             sys.exit(1)
 
-        # 從文件讀取 JSON (Laravel 傳遞文件路徑)
-        temp_file_path = sys.argv[1]
-        with open(temp_file_path, 'r', encoding='utf-8') as f:
+        # 讀取檔案路徑
+        input_file = sys.argv[1]
+
+        # 讀取檔案內容
+        with open(input_file, 'r', encoding='utf-8') as f:
             input_data = json.load(f)
 
         # 解析參數
@@ -276,7 +278,7 @@ def main():
             'success': True,
             'predictions': predictions_with_dates,
             'model_info': {
-                'order': f"ARIMA{model_info['order']}",
+                'order': model_info['order'],
                 'aic': round(model_info['aic'], 2),
                 'bic': round(model_info['bic'], 2),
                 'model_type': 'ARIMA'
@@ -287,11 +289,9 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
 
     except Exception as e:
-        import traceback
         print(json.dumps({
             'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
+            'error': str(e)
         }))
         sys.exit(1)
 

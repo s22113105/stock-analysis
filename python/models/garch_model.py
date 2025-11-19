@@ -83,19 +83,8 @@ class GARCHPredictor:
         # 計算無條件波動率
         params = self.fitted_model.params
         omega = params['omega']
-
-        # 處理 GARCH 和 ARCH 參數
-        alpha = 0
-        for i in range(1, self.q + 1):
-            key = f'alpha[{i}]'
-            if key in params:
-                alpha += params[key]
-
-        beta = 0
-        for i in range(1, self.p + 1):
-            key = f'beta[{i}]'
-            if key in params:
-                beta += params[key]
+        alpha = params[['alpha[%d]' % i for i in range(1, self.p + 1)]].sum()
+        beta = params[['beta[%d]' % i for i in range(1, self.q + 1)]].sum()
 
         # 長期波動率
         if (alpha + beta) < 1:
@@ -113,7 +102,7 @@ class GARCHPredictor:
                 'alpha': float(alpha),
                 'beta': float(beta)
             },
-            'long_run_volatility': float(long_run_volatility) if long_run_volatility and not np.isnan(long_run_volatility) else None
+            'long_run_volatility': float(long_run_volatility) if long_run_volatility else None
         }
 
     def predict(self, horizon=7):
@@ -182,30 +171,41 @@ class GARCHPredictor:
             test_results: 測試結果
         """
         returns = self.calculate_returns(prices)
-
-        # 計算報酬率的自相關
         squared_returns = returns ** 2
-        correlation = np.corrcoef(squared_returns[:-1], squared_returns[1:])[0, 1]
+
+        # 計算自相關
+        from statsmodels.stats.diagnostic import acorr_ljungbox
+
+        # Ljung-Box 測試
+        lb_test = acorr_ljungbox(squared_returns, lags=10, return_df=True)
+
+        # ARCH 效應測試
+        from statsmodels.stats.diagnostic import het_arch
+        arch_test = het_arch(returns, nlags=5)
 
         return {
-            'squared_returns_correlation': float(correlation),
-            'has_clustering': correlation > 0.1
+            'ljung_box_pvalue': float(lb_test['lb_pvalue'].iloc[-1]),
+            'arch_lm_statistic': float(arch_test[0]),
+            'arch_lm_pvalue': float(arch_test[1]),
+            'has_volatility_clustering': arch_test[1] < 0.05
         }
 
 def main():
     """主函數"""
     try:
-        # 從命令列參數讀取輸入
+        # ✅ 修正:從檔案讀取輸入資料
         if len(sys.argv) < 2:
             print(json.dumps({
                 'success': False,
-                'error': '請提供輸入資料'
+                'error': '請提供輸入資料檔案路徑'
             }))
             sys.exit(1)
 
-        # 從文件讀取 JSON (Laravel 傳遞文件路徑)
-        temp_file_path = sys.argv[1]
-        with open(temp_file_path, 'r', encoding='utf-8') as f:
+        # 讀取檔案路徑
+        input_file = sys.argv[1]
+
+        # 讀取檔案內容
+        with open(input_file, 'r', encoding='utf-8') as f:
             input_data = json.load(f)
 
         # 解析參數
@@ -221,7 +221,7 @@ def main():
         if len(prices) < 100:
             print(json.dumps({
                 'success': False,
-                'error': '資料不足,GARCH模型至少需要100天的歷史資料'
+                'error': '資料不足,至少需要100天的歷史資料'
             }))
             sys.exit(1)
 
@@ -231,7 +231,7 @@ def main():
         # 訓練模型
         model_info = predictor.train(prices)
 
-        # 進行波動率預測
+        # 預測波動率
         volatility_predictions = predictor.predict(horizon=prediction_days)
 
         # 計算風險指標
@@ -280,11 +280,9 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
 
     except Exception as e:
-        import traceback
         print(json.dumps({
             'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
+            'error': str(e)
         }))
         sys.exit(1)
 
