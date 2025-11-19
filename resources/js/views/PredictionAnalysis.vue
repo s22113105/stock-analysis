@@ -15,7 +15,7 @@
             <!-- 步驟 1: 選擇預測目標 -->
             <v-row align="center" class="mb-4">
               <v-col cols="12" md="12">
-                <div class="text-h6 mb-3">步驟 1：選擇預測目標</div>
+                <div class="text-h6 mb-3">步驟 1:選擇預測目標</div>
               </v-col>
 
               <v-col cols="12" md="6">
@@ -40,27 +40,19 @@
 
               <v-col cols="12" md="6" v-if="targetType === 'stock'">
                 <v-autocomplete
-                  v-model="selectedStock"
-                  :items="stocksList"
-                  :loading="loadingStocks"
-                  item-title="display"
-                  item-value="value"
-                  label="選擇股票"
-                  placeholder="輸入股票代碼或名稱"
-                  outlined
-                  dense
-                  clearable
-                  no-data-text="目前沒有可用的股票資料"
-                  @update:search="searchStocks"
-                >
-                  <template v-slot:item="{ props, item }">
-                    <v-list-item v-bind="props">
-                      <v-list-item-title>
-                        {{ item.raw.symbol }} - {{ item.raw.name }}
-                      </v-list-item-title>
-                    </v-list-item>
-                  </template>
-                </v-autocomplete>
+                    v-model="selectedStock"
+                    :items="stocksList"
+                    :loading="loadingStocks"
+                    item-title="display"
+                    item-value="value"
+                    label="選擇股票"
+                    placeholder="輸入股票代碼或名稱"
+                    outlined
+                    dense
+                    clearable
+                    no-data-text="目前沒有可用的股票資料"
+                    @update:search="searchStocks"
+                />
               </v-col>
             </v-row>
 
@@ -69,7 +61,7 @@
             <!-- 步驟 2: 模型設定 -->
             <v-row align="center" class="mb-4">
               <v-col cols="12">
-                <div class="text-h6 mb-3">步驟 2：模型設定</div>
+                <div class="text-h6 mb-3">步驟 2:模型設定</div>
               </v-col>
 
               <v-col cols="12" md="4">
@@ -136,46 +128,23 @@
             <!-- 步驟 3: 執行預測 -->
             <v-row>
               <v-col cols="12">
-                <div class="text-h6 mb-3">步驟 3：執行預測</div>
+                <div class="text-h6 mb-3">步驟 3:執行預測</div>
               </v-col>
 
               <v-col cols="12">
                 <v-btn
-                  color="primary"
-                  @click="runPrediction"
-                  :loading="loading"
-                  :disabled="!canPredict"
-                  x-large
-                  block
-                  elevation="3"
+                    color="primary"
+                    @click="runPrediction"
+                    :disabled="!canPredict"
+                    x-large
+                    block
+                    elevation="3"
                 >
-                  <v-icon left>mdi-robot</v-icon>
-                  執行 {{ selectedModel.toUpperCase() }} 預測
+                <v-icon left>mdi-robot</v-icon>
+                    執行 {{ selectedModel.toUpperCase() }} 預測
                 </v-btn>
               </v-col>
             </v-row>
-
-            <!-- 載入中提示 - 修正:只在執行預測時顯示 -->
-            <v-alert
-              v-if="loading"
-              type="info"
-              class="mt-6"
-              prominent
-            >
-              <v-row align="center">
-                <v-col class="grow">
-                  正在執行 {{ selectedModel.toUpperCase() }} 模型訓練與預測，請稍候...
-                  <div class="text-caption mt-2">預計需要 10-30 秒</div>
-                </v-col>
-                <v-col class="shrink">
-                  <v-progress-circular
-                    indeterminate
-                    color="white"
-                    size="32"
-                  ></v-progress-circular>
-                </v-col>
-              </v-row>
-            </v-alert>
 
             <!-- 錯誤訊息 -->
             <v-alert
@@ -187,6 +156,29 @@
             >
               {{ error }}
             </v-alert>
+
+            <!-- 載入狀態 - 修正:只顯示一個載入動畫 -->
+            <v-row v-if="loading" class="mt-6">
+              <v-col cols="12">
+                <v-card outlined class="text-center pa-12">
+                  <v-progress-circular
+                    indeterminate
+                    color="primary"
+                    size="64"
+                    width="6"
+                  ></v-progress-circular>
+                  <div class="text-h6 mt-4">正在執行 {{ selectedModel.toUpperCase() }} 模型訓練與預測...</div>
+                  <div class="text-caption text-grey mt-2">
+                    使用 {{ trainingPeriod }} 天歷史資料進行訓練,預計需要 30-60 秒
+                  </div>
+                  <v-progress-linear
+                    indeterminate
+                    color="primary"
+                    class="mt-4"
+                  ></v-progress-linear>
+                </v-card>
+              </v-col>
+            </v-row>
 
             <!-- 預測結果 -->
             <v-expand-transition>
@@ -221,7 +213,6 @@
                           <div class="text-h3 font-weight-bold">
                             ${{ currentPrice }}
                           </div>
-                          <!-- 修正:使用 formatDate 函數 -->
                           <div class="text-caption">{{ formatDate(predictionResult.current_date) }}</div>
                         </v-card-text>
                       </v-card>
@@ -346,7 +337,7 @@
               ></v-text-field>
               <v-text-field
                 v-model.number="modelParameters.lookback"
-                label="回顧期間（天）"
+                label="回顧期間(天)"
                 type="number"
                 min="30"
                 max="120"
@@ -459,9 +450,9 @@ export default {
 
     // 模型選項
     const models = ref([
-      { value: 'lstm', text: 'LSTM', description: '長短期記憶神經網路，適合捕捉長期依賴關係' },
-      { value: 'arima', text: 'ARIMA', description: '自回歸移動平均模型，適合時間序列預測' },
-      { value: 'garch', text: 'GARCH', description: '廣義自回歸條件異方差模型，適合波動率預測' }
+      { value: 'lstm', text: 'LSTM', description: '長短期記憶神經網路,適合捕捉長期依賴關係' },
+      { value: 'arima', text: 'ARIMA', description: '自回歸移動平均模型,適合時間序列預測' },
+      { value: 'garch', text: 'GARCH', description: '廣義自回歸條件異方差模型,適合波動率預測' }
     ])
 
     let chartInstance = null
@@ -498,9 +489,7 @@ export default {
       return predictionResult.value.predictions[0].confidence_upper
     })
 
-    // ========================================
-    // 修正 1: 新增日期格式化函數
-    // ========================================
+    // 日期格式化函數
     const formatDate = (dateString) => {
       if (!dateString) return '---'
 
@@ -517,9 +506,7 @@ export default {
       }
     }
 
-    // ========================================
-    // 修正 3: 從資料庫動態載入股票列表並去重
-    // ========================================
+    // 修正:從資料庫動態載入股票列表並加強去重
     const loadStocks = async () => {
       loadingStocks.value = true
       try {
@@ -531,17 +518,20 @@ export default {
         })
 
         if (response.data.success) {
-          // 使用 Map 去重（以 symbol 為 key）
+          // 使用 Map 去重(以 symbol 為 key)
           const stocksMap = new Map()
 
           response.data.data.data.forEach(stock => {
             if (stock.symbol && stock.name) {
-              stocksMap.set(stock.symbol, {
-                symbol: stock.symbol,
-                name: stock.name,
-                value: stock.symbol,
-                display: `${stock.symbol} - ${stock.name}`
-              })
+              // 只保留第一次出現的股票
+              if (!stocksMap.has(stock.symbol)) {
+                stocksMap.set(stock.symbol, {
+                  symbol: stock.symbol,
+                  name: stock.name,
+                  value: stock.symbol,
+                  display: `${stock.symbol} - ${stock.name}`
+                })
+              }
             }
           })
 
@@ -551,6 +541,13 @@ export default {
           })
 
           console.log('✅ 載入股票列表成功:', stocksList.value.length, '個')
+
+          // 檢查是否有重複
+          const symbols = stocksList.value.map(s => s.symbol)
+          const uniqueSymbols = [...new Set(symbols)]
+          if (symbols.length !== uniqueSymbols.length) {
+            console.warn('⚠️ 警告:檢測到重複的股票代碼')
+          }
         }
       } catch (err) {
         console.error('❌ 載入股票列表失敗:', err)
