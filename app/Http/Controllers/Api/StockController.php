@@ -28,7 +28,7 @@ class StockController extends Controller
 
     /**
      * 取得股票列表
-     * 
+     *
      * GET /api/stocks
      */
     public function index(Request $request): JsonResponse
@@ -66,7 +66,7 @@ class StockController extends Controller
 
     /**
      * 取得單一股票詳情
-     * 
+     *
      * GET /api/stocks/{id}
      */
     public function show($id): JsonResponse
@@ -82,7 +82,7 @@ class StockController extends Controller
 
     /**
      * 取得股票歷史價格
-     * 
+     *
      * GET /api/stocks/{id}/prices
      */
     public function prices(Request $request, int $id): JsonResponse
@@ -103,7 +103,7 @@ class StockController extends Controller
 
         try {
             $stock = Stock::findOrFail($id);
-            
+
             $query = StockPrice::where('stock_id', $id);
 
             // 根據 period 參數設定日期範圍
@@ -151,7 +151,7 @@ class StockController extends Controller
 
     /**
      * 取得股票圖表資料
-     * 
+     *
      * GET /api/stocks/{id}/chart
      */
     public function chart(Request $request, int $id): JsonResponse
@@ -233,7 +233,7 @@ class StockController extends Controller
 
     /**
      * 取得股票技術指標
-     * 
+     *
      * GET /api/stocks/{id}/indicators
      */
     public function indicators(Request $request, int $id): JsonResponse
@@ -345,7 +345,7 @@ class StockController extends Controller
 
     /**
      * 搜尋股票
-     * 
+     *
      * POST /api/stocks/search
      */
     public function search(Request $request): JsonResponse
@@ -368,9 +368,9 @@ class StockController extends Controller
             $limit = $request->input('limit', 20);
 
             $stocks = Stock::where(function ($q) use ($searchQuery) {
-                    $q->where('symbol', 'like', "%{$searchQuery}%")
-                        ->orWhere('name', 'like', "%{$searchQuery}%");
-                })
+                $q->where('symbol', 'like', "%{$searchQuery}%")
+                    ->orWhere('name', 'like', "%{$searchQuery}%");
+            })
                 ->where('is_active', true)
                 ->with('latestPrice')
                 ->limit($limit)
@@ -396,7 +396,7 @@ class StockController extends Controller
 
     /**
      * 匯入股票資料（觸發爬蟲）
-     * 
+     *
      * POST /api/stocks/import
      */
     public function import(Request $request): JsonResponse
