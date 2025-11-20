@@ -53,7 +53,7 @@ RUN pecl install redis \
 # 安裝 Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# 複製應用程式
+# 複製應用程式 (注意：本機開發時通常透過 volume 掛載，這行主要是為了部署或 build image)
 COPY . /var/www
 
 # 設定權限
