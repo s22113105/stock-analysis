@@ -4,11 +4,11 @@
 export LANG=C.UTF-8
 
 echo "=========================================="
-echo "📊 股票分析系統 - 智慧緩衝匯入工具 (v9)"
+echo "📊 股票分析系統 - Docker 專用爬蟲工具 (v10)"
 echo "=========================================="
 echo ""
-echo "⚠️  警告: 此腳本將匯入真實台股資料"
-echo "ℹ️  說明: 具備自動降速機制，避免 API 封鎖導致資料缺失"
+echo "⚠️  警告: 此腳本將透過 Docker 容器執行爬蟲"
+echo "ℹ️  說明: 解決 'Connection refused' 資料庫連線問題"
 echo ""
 read -p "確定要繼續嗎? (yes/no): " confirm
 
@@ -17,19 +17,41 @@ if [ "$confirm" != "yes" ]; then
     exit 0
 fi
 
-# 檢查 Laravel 環境
-if [ ! -f "artisan" ]; then
-    echo "❌ 錯誤: 請在 Laravel 專案根目錄執行此腳本"
+# 檢查 docker-compose 是否可用
+if ! command -v docker-compose &> /dev/null; then
+    echo "❌ 錯誤: 找不到 docker-compose 指令"
     exit 1
 fi
 
 echo ""
 echo "=========================================="
-echo "第 1 步: 檢查環境"
+echo "第 1 步: 檢查 Docker 環境與資料庫"
 echo "=========================================="
 
-# 檢查資料庫連線
-php artisan tinker --execute="try { \DB::connection()->getPdo(); echo '✅ 資料庫連線正常' . PHP_EOL; } catch (\Exception \$e) { echo '❌ 資料庫連線失敗' . PHP_EOL; exit(1); }"
+# 檢查容器是否在執行
+if [ -z "$(docker-compose ps -q app)" ]; then
+    echo "⚠️  App 容器未啟動，正在啟動..."
+    docker-compose up -d
+    echo "⏳ 等待服務啟動 (10秒)..."
+    sleep 10
+fi
+
+# 檢查資料庫連線 (在容器內執行)
+echo "🔍 測試容器內資料庫連線..."
+docker-compose exec -T app php artisan tinker --execute="
+try {
+    \DB::connection()->getPdo();
+    echo '✅ 資料庫連線正常' . PHP_EOL;
+} catch (\Exception \$e) {
+    echo '❌ 資料庫連線失敗: ' . \$e->getMessage() . PHP_EOL;
+    exit(1);
+}
+"
+
+if [ $? -ne 0 ]; then
+    echo "❌ 無法連線到資料庫，請檢查 .env 設定或 Docker 狀態"
+    exit 1
+fi
 
 echo ""
 echo "=========================================="
@@ -40,7 +62,7 @@ read -p "是否清空現有股票資料? (yes/no): " clear_data
 
 if [ "$clear_data" == "yes" ]; then
     echo "🗑️  正在清空所有相關資料..."
-    php artisan tinker --execute="
+    docker-compose exec -T app php artisan tinker --execute="
         try {
             DB::statement('SET FOREIGN_KEY_CHECKS=0;');
             DB::table('backtest_results')->truncate();
@@ -92,9 +114,11 @@ TOTAL_STOCKS=${#STOCK_ARRAY[@]}
 CURRENT=0
 SUCCESS_COUNT=0
 FAIL_COUNT=0
-# 暫存檔路徑
+
+# 在容器內建立 log 目錄 (確保權限)
+docker-compose exec -T app mkdir -p storage/logs/crawler
+# 定義暫存檔路徑 (容器內路徑)
 TMP_FILE="storage/logs/crawler/last_run.tmp"
-mkdir -p storage/logs/crawler
 
 for symbol in "${STOCK_ARRAY[@]}"; do
     CURRENT=$((CURRENT + 1))
@@ -113,7 +137,8 @@ for symbol in "${STOCK_ARRAY[@]}"; do
         if date -d "today" &>/dev/null; then
              DATE=$(date -d "$LATEST_DATE -$i days" +%Y-%m-%d)
         else
-             DATE=$(php -r "echo date('Y-m-d', strtotime('$LATEST_DATE -$i days'));" 2>/dev/null)
+             # 使用 docker 內的 php 來計算日期，確保跨平台兼容
+             DATE=$(docker-compose exec -T app php -r "echo date('Y-m-d', strtotime('$LATEST_DATE -$i days'));")
         fi
 
         if [ -z "$DATE" ]; then continue; fi
@@ -129,11 +154,13 @@ for symbol in "${STOCK_ARRAY[@]}"; do
         
         echo -n "  📅 正在抓取 $YM 資料 (基準日: $DATE) ... "
         
-        # 執行爬蟲並將輸出導向暫存檔
-        php artisan crawler:stocks --symbol="$symbol" --date="$DATE" --sync > "$TMP_FILE" 2>&1
+        # ✅ 核心修正: 使用 docker-compose exec -T 執行爬蟲
+        # 將輸出導向容器內的暫存檔，然後再讀出來
+        docker-compose exec -T app bash -c "php artisan crawler:stocks --symbol='$symbol' --date='$DATE' --sync > $TMP_FILE 2>&1"
         EXIT_CODE=$?
         
-        OUTPUT=$(cat "$TMP_FILE")
+        # 讀取容器內的暫存檔內容
+        OUTPUT=$(docker-compose exec -T app cat $TMP_FILE)
         
         # 判斷邏輯
         if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "成功\|更新\|完成\|取得"; then
@@ -141,11 +168,9 @@ for symbol in "${STOCK_ARRAY[@]}"; do
             STOCK_FETCH_COUNT=$((STOCK_FETCH_COUNT + 1))
             SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             CONSECUTIVE_FAILURES=0
-            # 成功後基本休息 2 秒
             sleep 2
         elif echo "$OUTPUT" | grep -q "查無資料\|無交易"; then
             echo "⚠️  無資料 (正常)"
-            # 查無資料也算一次正常請求，休息 1 秒
             sleep 1
         else
             echo "❌ 失敗"
@@ -153,18 +178,17 @@ for symbol in "${STOCK_ARRAY[@]}"; do
             echo "     🔍 錯誤詳情:"
             echo "$OUTPUT" | grep -v "stdout is not a tty" | head -n 5 | sed 's/^/     /g'
             echo "     ----------------------------------------"
+            # 寫入 host 端 log 方便查看
             echo "[$DATE $symbol] $OUTPUT" >> storage/logs/crawler/errors.log
+            
             FAIL_COUNT=$((FAIL_COUNT + 1))
             CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
-            
-            # 失敗後進入冷卻模式
             echo "     ❄️ 偵測到錯誤，冷卻 10 秒..."
             sleep 10
         fi
         
-        # 如果連續失敗超過 3 次，大幅增加休息時間
         if [ $CONSECUTIVE_FAILURES -ge 3 ]; then
-             echo "     🔥 連續失敗過多，暫停 30 秒讓 API 解鎖..."
+             echo "     🔥 連續失敗過多，暫停 30 秒..."
              sleep 30
              CONSECUTIVE_FAILURES=0
         fi
@@ -179,14 +203,14 @@ for symbol in "${STOCK_ARRAY[@]}"; do
 done
 
 # 清理
-rm -f "$TMP_FILE"
+docker-compose exec -T app rm -f $TMP_FILE
 
 echo "=========================================="
 echo "第 5 步: 驗證資料"
 echo "=========================================="
 
 echo "📊 統計資料數量..."
-php artisan tinker --execute="
+docker-compose exec -T app php artisan tinker --execute="
 echo '----------------------------------------' . PHP_EOL;
 \$stocks = \\App\\Models\\Stock::withCount('prices')->get();
 foreach (\$stocks as \$stock) {
