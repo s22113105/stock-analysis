@@ -1,10 +1,11 @@
 #!/bin/bash
 
 echo "=========================================="
-echo "📊 股票分析系統 - 真實資料批次匯入工具"
+echo "📊 股票分析系統 - 真實資料批次匯入工具 (穩定版 v8)"
 echo "=========================================="
 echo ""
 echo "⚠️  警告: 此腳本將匯入真實台股資料"
+echo "ℹ️  說明: 改用暫存檔機制，解決 Windows 環境無回傳訊息問題"
 echo ""
 read -p "確定要繼續嗎? (yes/no): " confirm
 
@@ -13,18 +14,16 @@ if [ "$confirm" != "yes" ]; then
     exit 0
 fi
 
-echo ""
-echo "=========================================="
-echo "第 1 步: 檢查環境"
-echo "=========================================="
-
-# 檢查是否在 Laravel 專案目錄
+# 檢查 Laravel 環境
 if [ ! -f "artisan" ]; then
     echo "❌ 錯誤: 請在 Laravel 專案根目錄執行此腳本"
     exit 1
 fi
 
-echo "✅ Laravel 環境檢查通過"
+echo ""
+echo "=========================================="
+echo "第 1 步: 檢查環境"
+echo "=========================================="
 
 # 檢查資料庫連線
 php artisan tinker --execute="
@@ -39,18 +38,33 @@ try {
 
 echo ""
 echo "=========================================="
-echo "第 2 步: 清理測試資料 (可選)"
+echo "第 2 步: 清理舊資料 (可選)"
 echo "=========================================="
+echo "💡 建議首次執行或想重新抓取時選擇 'yes'"
+echo "⚠️  注意: 這會清空所有的股票價格、選擇權與預測紀錄！"
+echo ""
 
 read -p "是否清空現有股票資料? (yes/no): " clear_data
 
 if [ "$clear_data" == "yes" ]; then
-    echo "🗑️  清空股票資料..."
+    echo "🗑️  正在清空所有相關資料..."
     php artisan tinker --execute="
-        DB::table('stock_prices')->truncate();
-        DB::table('stocks')->truncate();
-        echo '✅ 股票資料已清空' . PHP_EOL;
+        try {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
+            DB::table('backtest_results')->truncate();
+            DB::table('predictions')->truncate();
+            DB::table('option_prices')->truncate();
+            DB::table('options')->truncate();
+            DB::table('stock_prices')->truncate();
+            DB::table('stocks')->truncate();
+            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+            echo '✅ 所有關聯資料已清空' . PHP_EOL;
+        } catch (\Exception \$e) {
+            echo '❌ 清空失敗: ' . \$e->getMessage() . PHP_EOL;
+        }
     "
+else
+    echo "⏩ 跳過清理步驟，保留現有資料"
 fi
 
 echo ""
@@ -58,8 +72,8 @@ echo "=========================================="
 echo "第 3 步: 設定抓取參數"
 echo "=========================================="
 
-# 預設抓取最近 30 天的資料
-DEFAULT_DAYS=30
+# 預設抓取最近 180 天
+DEFAULT_DAYS=180
 DEFAULT_STOCKS="2330,2317,2454,2412,2882,2303,2308,2886,2884,1301,1303,2002,3045,2881,2891"
 
 read -p "要抓取最近幾天的資料? (預設: $DEFAULT_DAYS): " DAYS
@@ -68,209 +82,127 @@ DAYS=${DAYS:-$DEFAULT_DAYS}
 read -p "要抓取的股票代碼 (逗號分隔, 預設: 15檔權值股): " STOCKS
 STOCKS=${STOCKS:-$DEFAULT_STOCKS}
 
+# 使用今天作為基準
+LATEST_DATE=$(date +%Y-%m-%d)
+
 echo ""
 echo "📋 抓取設定:"
 echo "   期間: 最近 $DAYS 天"
 echo "   股票: $STOCKS"
+echo "   模式: 智慧月曆模式 (自動過濾重複月份)"
 echo ""
 
 echo "=========================================="
-echo "第 4 步: 找出最近有資料的日期"
+echo "第 4 步: 批次抓取股票歷史資料"
 echo "=========================================="
 
-echo "🔍 正在尋找 TWSE API 最近有資料的日期..."
-
-# 使用 PHP 腳本找出最近有資料的日期
-LATEST_DATE=$(php -r "
-require 'vendor/autoload.php';
-\$app = require_once 'bootstrap/app.php';
-\$kernel = \$app->make(Illuminate\\Contracts\\Console\\Kernel::class);
-\$kernel->bootstrap();
-
-\$twseApi = app(App\\Services\\TwseApiService::class);
-
-// 從今天往前找，最多找 10 天
-for (\$i = 3; \$i <= 10; \$i++) {
-    \$date = \\Carbon\\Carbon::now()->subDays(\$i);
-    if (\$date->isWeekend()) continue;
-    
-    \$dateString = \$date->format('Ymd');
-    try {
-        \$data = \$twseApi->getStockDayAll(\$dateString);
-        if (!\$data->isEmpty()) {
-            echo \$date->format('Y-m-d');
-            exit(0);
-        }
-    } catch (\\Exception \$e) {
-        // 繼續嘗試
-    }
-}
-echo date('Y-m-d', strtotime('-3 days'));
-")
-
-echo "✅ 找到最近有資料的日期: $LATEST_DATE"
-echo ""
-
-echo "=========================================="
-echo "第 5 步: 批次抓取股票歷史資料"
-echo "=========================================="
-
-# 將股票代碼字串轉換為陣列
 IFS=',' read -ra STOCK_ARRAY <<< "$STOCKS"
-
 TOTAL_STOCKS=${#STOCK_ARRAY[@]}
 CURRENT=0
 SUCCESS_COUNT=0
 FAIL_COUNT=0
-
-echo "📊 開始抓取 $TOTAL_STOCKS 檔股票資料"
-echo ""
+API_CALL_COUNT=0
 
 # 建立 log 目錄
 mkdir -p storage/logs/crawler
+# 建立暫存檔
+TMP_FILE="storage/logs/crawler/last_run.tmp"
 
 for symbol in "${STOCK_ARRAY[@]}"; do
     CURRENT=$((CURRENT + 1))
-    symbol=$(echo $symbol | xargs) # 移除空白
+    symbol=$(echo $symbol | xargs)
     
     echo "=========================================="
     echo "[$CURRENT/$TOTAL_STOCKS] 處理股票: $symbol"
     echo "=========================================="
     
-    # 抓取最近 N 天的資料
-    FETCHED_DAYS=0
+    PROCESSED_MONTHS="|"
+    STOCK_FETCH_COUNT=0
+    
     for (( i=0; i<DAYS; i++ )); do
-        # 使用 PHP 計算日期（相容性更好）
-        DATE=$(php -r "echo date('Y-m-d', strtotime('$LATEST_DATE -$i days'));")
-        DAY_OF_WEEK=$(php -r "echo date('N', strtotime('$DATE'));")
+        # 日期計算
+        if date -d "today" &>/dev/null; then
+             DATE=$(date -d "$LATEST_DATE -$i days" +%Y-%m-%d)
+        else
+             DATE=$(php -r "echo date('Y-m-d', strtotime('$LATEST_DATE -$i days'));" 2>/dev/null)
+        fi
+
+        if [ -z "$DATE" ]; then continue; fi
         
-        # 跳過週末 (6=週六, 7=週日)
-        if [ $DAY_OF_WEEK -eq 6 ] || [ $DAY_OF_WEEK -eq 7 ]; then
+        YM=${DATE:0:7} # 取得 YYYY-MM
+        
+        # 檢查月份是否重複
+        if [[ "$PROCESSED_MONTHS" == *"|$YM|"* ]]; then
             continue
         fi
         
-        echo -n "  📅 $DATE ... "
+        PROCESSED_MONTHS="${PROCESSED_MONTHS}${YM}|"
         
-        # 執行爬蟲 (同步模式,直接執行不透過 Queue)
-        OUTPUT=$(php artisan crawler:stocks --symbol="$symbol" --date="$DATE" --sync 2>&1)
+        echo -n "  📅 正在抓取 $YM 資料 (基準日: $DATE) ... "
         
-        if echo "$OUTPUT" | grep -q "成功\|success\|完成"; then
-            echo "✅"
-            FETCHED_DAYS=$((FETCHED_DAYS + 1))
+        # ✅ 將輸出重定向到檔案，解決 Windows 顯示問題
+        php artisan crawler:stocks --symbol="$symbol" --date="$DATE" --sync > "$TMP_FILE" 2>&1
+        EXIT_CODE=$?
+        
+        # 讀取輸出內容
+        OUTPUT=$(cat "$TMP_FILE")
+        
+        # 判斷邏輯
+        if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "成功\|更新\|完成\|取得"; then
+            echo "✅ 完成"
+            STOCK_FETCH_COUNT=$((STOCK_FETCH_COUNT + 1))
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        elif echo "$OUTPUT" | grep -q "查無資料\|無交易"; then
+            echo "⚠️  無資料 (正常)"
         else
-            echo "⚠️"
-            # 記錄錯誤到 log
+            echo "❌ 失敗"
+            echo "     ----------------------------------------"
+            echo "     🔍 錯誤詳情 (原始輸出):"
+            # 過濾掉 tty 警告後顯示
+            echo "$OUTPUT" | grep -v "stdout is not a tty" | head -n 10 | sed 's/^/     /g'
+            echo "     ----------------------------------------"
+            
             echo "[$DATE $symbol] $OUTPUT" >> storage/logs/crawler/errors.log
+            FAIL_COUNT=$((FAIL_COUNT + 1))
         fi
         
-        # 避免 API 限制,稍作延遲
-        sleep 0.5
+        # 防封鎖機制
+        API_CALL_COUNT=$((API_CALL_COUNT + 1))
+        if [ $((API_CALL_COUNT % 5)) -eq 0 ]; then
+            echo "     ☕ 休息 5 秒..."
+            sleep 5
+        else
+            sleep 2
+        fi
     done
     
-    if [ $FETCHED_DAYS -gt 0 ]; then
-        echo "  ✅ 成功抓取 $FETCHED_DAYS 天的資料"
-        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+    if [ $STOCK_FETCH_COUNT -gt 0 ]; then
+        echo "  ✅ $symbol 資料同步完成"
     else
-        echo "  ❌ 沒有成功抓取任何資料"
-        FAIL_COUNT=$((FAIL_COUNT + 1))
+        echo "  ⚠️ $symbol 未更新任何資料"
     fi
     echo ""
 done
 
+# 清理暫存檔
+rm -f "$TMP_FILE"
+
 echo "=========================================="
-echo "第 6 步: 驗證資料"
+echo "第 5 步: 驗證資料"
 echo "=========================================="
 
 echo "📊 統計資料數量..."
 php artisan tinker --execute="
-echo '========================================' . PHP_EOL;
-echo '📊 資料統計' . PHP_EOL;
-echo '========================================' . PHP_EOL;
-echo '股票數量: ' . \\App\\Models\\Stock::count() . PHP_EOL;
-echo '股價記錄: ' . \\App\\Models\\StockPrice::count() . PHP_EOL;
-echo PHP_EOL;
-
-// 顯示每檔股票的資料狀況
-echo '各股票資料狀況:' . PHP_EOL;
 echo '----------------------------------------' . PHP_EOL;
 \$stocks = \\App\\Models\\Stock::withCount('prices')->get();
 foreach (\$stocks as \$stock) {
-    \$latestPrice = \$stock->prices()->latest('trade_date')->first();
-    echo sprintf(
-        '%-6s %-10s: %3d 筆資料',
-        \$stock->symbol,
-        \$stock->name,
-        \$stock->prices_count
-    );
-    if (\$latestPrice) {
-        echo sprintf(' (最新: %s, 收盤: %s)', 
-            \$latestPrice->trade_date,
-            \$latestPrice->close
-        );
-    }
+    \$latest = \$stock->prices()->latest('trade_date')->first();
+    \$oldest = \$stock->prices()->oldest('trade_date')->first();
+    echo sprintf('%-6s %-10s: %3d 筆', \$stock->symbol, \$stock->name, \$stock->prices_count);
+    if (\$oldest && \$latest) echo sprintf(' (%s ~ %s)', \$oldest->trade_date, \$latest->trade_date);
     echo PHP_EOL;
-}
-
-echo PHP_EOL;
-echo '最新 5 筆股價記錄:' . PHP_EOL;
-echo '----------------------------------------' . PHP_EOL;
-\$prices = \\App\\Models\\StockPrice::with('stock')
-    ->orderBy('trade_date', 'desc')
-    ->orderBy('created_at', 'desc')
-    ->limit(5)
-    ->get();
-
-foreach (\$prices as \$price) {
-    echo sprintf(
-        '%s %s (%s): 開 %s, 高 %s, 低 %s, 收 %s, 量 %s' . PHP_EOL,
-        \$price->trade_date,
-        \$price->stock->name,
-        \$price->stock->symbol,
-        \$price->open,
-        \$price->high,
-        \$price->low,
-        \$price->close,
-        number_format(\$price->volume)
-    );
 }
 "
 
 echo ""
-echo "=========================================="
-echo "第 7 步: 資料完整性檢查"
-echo "=========================================="
-
-php artisan data:validate
-
-echo ""
-echo "=========================================="
-echo "✅ 批次資料匯入完成!"
-echo "=========================================="
-echo ""
-echo "📋 執行摘要:"
-echo "  • 處理股票數: $TOTAL_STOCKS"
-echo "  • 成功: $SUCCESS_COUNT"
-echo "  • 失敗: $FAIL_COUNT"
-echo "  • 資料期間: 最近 $DAYS 天"
-echo "  • 最新資料日期: $LATEST_DATE"
-echo ""
-echo "📝 後續步驟:"
-echo "  1. 執行診斷工具檢查特定股票: php diagnose_crawler.php 2330"
-echo "  2. 查看 API 狀態: php artisan stocks:status"
-echo "  3. 檢查前端顯示是否正常"
-echo "  4. 測試 API 端點: GET /api/stocks"
-echo ""
-echo "📖 查看詳細 log:"
-echo "  成功記錄: tail -f storage/logs/laravel.log"
-echo "  錯誤記錄: tail -f storage/logs/crawler/errors.log"
-echo ""
-
-# 顯示錯誤摘要（如果有）
-if [ -f "storage/logs/crawler/errors.log" ]; then
-    ERROR_COUNT=$(wc -l < storage/logs/crawler/errors.log)
-    if [ $ERROR_COUNT -gt 0 ]; then
-        echo "⚠️  發現 $ERROR_COUNT 個錯誤，查看最近 5 個:"
-        tail -5 storage/logs/crawler/errors.log
-        echo ""
-    fi
-fi
+echo "✅ 執行結束!"
