@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# 強制設定編碼，避免 Windows Git Bash 亂碼
+export LANG=C.UTF-8
+
 echo "=========================================="
-echo "📊 股票分析系統 - 真實資料批次匯入工具 (穩定版 v8)"
+echo "📊 股票分析系統 - 智慧緩衝匯入工具 (v9)"
 echo "=========================================="
 echo ""
 echo "⚠️  警告: 此腳本將匯入真實台股資料"
-echo "ℹ️  說明: 改用暫存檔機制，解決 Windows 環境無回傳訊息問題"
+echo "ℹ️  說明: 具備自動降速機制，避免 API 封鎖導致資料缺失"
 echo ""
 read -p "確定要繼續嗎? (yes/no): " confirm
 
@@ -26,23 +29,12 @@ echo "第 1 步: 檢查環境"
 echo "=========================================="
 
 # 檢查資料庫連線
-php artisan tinker --execute="
-try {
-    \DB::connection()->getPdo();
-    echo '✅ 資料庫連線正常' . PHP_EOL;
-} catch (\Exception \$e) {
-    echo '❌ 資料庫連線失敗: ' . \$e->getMessage() . PHP_EOL;
-    exit(1);
-}
-"
+php artisan tinker --execute="try { \DB::connection()->getPdo(); echo '✅ 資料庫連線正常' . PHP_EOL; } catch (\Exception \$e) { echo '❌ 資料庫連線失敗' . PHP_EOL; exit(1); }"
 
 echo ""
 echo "=========================================="
 echo "第 2 步: 清理舊資料 (可選)"
 echo "=========================================="
-echo "💡 建議首次執行或想重新抓取時選擇 'yes'"
-echo "⚠️  注意: 這會清空所有的股票價格、選擇權與預測紀錄！"
-echo ""
 
 read -p "是否清空現有股票資料? (yes/no): " clear_data
 
@@ -64,7 +56,7 @@ if [ "$clear_data" == "yes" ]; then
         }
     "
 else
-    echo "⏩ 跳過清理步驟，保留現有資料"
+    echo "⏩ 跳過清理步驟"
 fi
 
 echo ""
@@ -89,7 +81,6 @@ echo ""
 echo "📋 抓取設定:"
 echo "   期間: 最近 $DAYS 天"
 echo "   股票: $STOCKS"
-echo "   模式: 智慧月曆模式 (自動過濾重複月份)"
 echo ""
 
 echo "=========================================="
@@ -101,16 +92,13 @@ TOTAL_STOCKS=${#STOCK_ARRAY[@]}
 CURRENT=0
 SUCCESS_COUNT=0
 FAIL_COUNT=0
-API_CALL_COUNT=0
-
-# 建立 log 目錄
-mkdir -p storage/logs/crawler
-# 建立暫存檔
+# 暫存檔路徑
 TMP_FILE="storage/logs/crawler/last_run.tmp"
+mkdir -p storage/logs/crawler
 
 for symbol in "${STOCK_ARRAY[@]}"; do
     CURRENT=$((CURRENT + 1))
-    symbol=$(echo $symbol | xargs)
+    symbol=$(echo $symbol | xargs) # 去除空白
     
     echo "=========================================="
     echo "[$CURRENT/$TOTAL_STOCKS] 處理股票: $symbol"
@@ -118,6 +106,7 @@ for symbol in "${STOCK_ARRAY[@]}"; do
     
     PROCESSED_MONTHS="|"
     STOCK_FETCH_COUNT=0
+    CONSECUTIVE_FAILURES=0
     
     for (( i=0; i<DAYS; i++ )); do
         # 日期計算
@@ -140,11 +129,10 @@ for symbol in "${STOCK_ARRAY[@]}"; do
         
         echo -n "  📅 正在抓取 $YM 資料 (基準日: $DATE) ... "
         
-        # ✅ 將輸出重定向到檔案，解決 Windows 顯示問題
+        # 執行爬蟲並將輸出導向暫存檔
         php artisan crawler:stocks --symbol="$symbol" --date="$DATE" --sync > "$TMP_FILE" 2>&1
         EXIT_CODE=$?
         
-        # 讀取輸出內容
         OUTPUT=$(cat "$TMP_FILE")
         
         # 判斷邏輯
@@ -152,27 +140,33 @@ for symbol in "${STOCK_ARRAY[@]}"; do
             echo "✅ 完成"
             STOCK_FETCH_COUNT=$((STOCK_FETCH_COUNT + 1))
             SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            CONSECUTIVE_FAILURES=0
+            # 成功後基本休息 2 秒
+            sleep 2
         elif echo "$OUTPUT" | grep -q "查無資料\|無交易"; then
             echo "⚠️  無資料 (正常)"
+            # 查無資料也算一次正常請求，休息 1 秒
+            sleep 1
         else
             echo "❌ 失敗"
             echo "     ----------------------------------------"
-            echo "     🔍 錯誤詳情 (原始輸出):"
-            # 過濾掉 tty 警告後顯示
-            echo "$OUTPUT" | grep -v "stdout is not a tty" | head -n 10 | sed 's/^/     /g'
+            echo "     🔍 錯誤詳情:"
+            echo "$OUTPUT" | grep -v "stdout is not a tty" | head -n 5 | sed 's/^/     /g'
             echo "     ----------------------------------------"
-            
             echo "[$DATE $symbol] $OUTPUT" >> storage/logs/crawler/errors.log
             FAIL_COUNT=$((FAIL_COUNT + 1))
+            CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+            
+            # 失敗後進入冷卻模式
+            echo "     ❄️ 偵測到錯誤，冷卻 10 秒..."
+            sleep 10
         fi
         
-        # 防封鎖機制
-        API_CALL_COUNT=$((API_CALL_COUNT + 1))
-        if [ $((API_CALL_COUNT % 5)) -eq 0 ]; then
-            echo "     ☕ 休息 5 秒..."
-            sleep 5
-        else
-            sleep 2
+        # 如果連續失敗超過 3 次，大幅增加休息時間
+        if [ $CONSECUTIVE_FAILURES -ge 3 ]; then
+             echo "     🔥 連續失敗過多，暫停 30 秒讓 API 解鎖..."
+             sleep 30
+             CONSECUTIVE_FAILURES=0
         fi
     done
     
@@ -184,7 +178,7 @@ for symbol in "${STOCK_ARRAY[@]}"; do
     echo ""
 done
 
-# 清理暫存檔
+# 清理
 rm -f "$TMP_FILE"
 
 echo "=========================================="
