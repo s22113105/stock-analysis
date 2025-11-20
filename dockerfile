@@ -19,8 +19,15 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
+    # ✅ 新增: 安裝 gnupg (安裝 Node.js 前置需求)
+    gnupg \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) gd
+
+# ✅ 新增: 安裝 Node.js (版本 20.x) 和 NPM
+# 使用 NodeSource 官方腳本安裝
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 # 安裝 Python 機器學習套件
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -53,7 +60,7 @@ RUN pecl install redis \
 # 安裝 Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# 複製應用程式 (注意：本機開發時通常透過 volume 掛載，這行主要是為了部署或 build image)
+# 複製應用程式
 COPY . /var/www
 
 # 設定權限
@@ -61,8 +68,10 @@ RUN chown -R www-data:www-data /var/www \
     && chmod -R 755 /var/www/storage \
     && chmod -R 755 /var/www/bootstrap/cache
 
-# 安裝 Composer 依賴（開發環境可以移除 --no-dev）
-RUN composer install --optimize-autoloader --no-interaction
+# 安裝 Composer 依賴
+# 注意：如果在 build 階段就要安裝依賴，請確保 composer.json 已被 COPY 進來
+# 為了避免快取問題，建議加上 --no-scripts
+RUN composer install --optimize-autoloader --no-interaction --no-scripts
 
 # 暴露端口
 EXPOSE 9000
