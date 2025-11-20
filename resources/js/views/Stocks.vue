@@ -78,7 +78,7 @@
               資料載入中，請稍候...
             </v-alert>
 
-            <!-- 診斷/錯誤訊息 -->
+            <!-- 錯誤訊息 -->
             <v-alert
               v-if="errorMessage"
               :type="stocks.length > 0 ? 'warning' : 'error'"
@@ -106,7 +106,7 @@
                 <strong>{{ item.symbol }}</strong>
               </template>
               <template v-slot:item.name="{ item }">
-                <span :class="{'text-primary': item.name.includes('(TEST)') || item.name.includes('(FAILSAFE)')}">{{ item.name }}</span>
+                <span>{{ item.name }}</span>
               </template>
               <template v-slot:item.price="{ item }">
                 <span v-if="item.price">
@@ -123,7 +123,7 @@
                   <v-icon size="small">
                     {{ item.change >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}
                   </v-icon>
-                  {{ item.change >= 0 ? '+' : '' }}{{ item.change }}%
+                  {{ item.change >= 0 ? '+' : '' }}{{ item.change.toFixed(2) }}%
                 </v-chip>
                 <span v-else class="text-grey">-</span>
               </template>
@@ -142,25 +142,12 @@
               <template v-slot:item.actions="{ item }">
                 <v-btn icon="mdi-eye" size="small" variant="text" @click="viewStockDetail(item)" title="詳情"></v-btn>
                 <v-btn icon="mdi-chart-line" size="small" variant="text" @click="viewChart(item)" title="走勢圖"></v-btn>
+                <v-btn icon="mdi-calculator-variant" size="small" variant="text" @click="calculate(item)" title="選擇權分析"></v-btn>
               </template>
             </v-data-table>
           </v-card-text>
         </v-card>
       </v-col>
-    </v-row>
-
-    <!-- 診斷區塊：顯示 API 回傳的原始資料 -->
-    <v-row v-if="rawApiResult" class="mt-6">
-        <v-col cols="12">
-             <v-card variant="outlined">
-                 <v-card-title class="text-subtitle-1 bg-yellow-lighten-4">
-                     🛠️ 後端診斷結果 (Raw API Data from /api/stocks)
-                 </v-card-title>
-                 <v-card-text>
-                     <pre>{{ JSON.stringify(rawApiResult, null, 2) }}</pre>
-                 </v-card-text>
-             </v-card>
-         </v-col>
     </v-row>
 
     <!-- 快速統計 (保持不變) -->
@@ -285,6 +272,14 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 錯誤訊息 Snackbar -->
+    <v-snackbar v-model="showError" color="error" :timeout="5000" top>
+      {{ errorMessage }}
+      <template v-slot:actions>
+        <v-btn variant="text" @click="showError = false">關閉</v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
@@ -293,26 +288,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 
-// --- Fallback Data for extreme error case ---
-const getFallbackData = () => {
-    return [{
-        id: 9999,
-        symbol: '2330',
-        name: '台積電 (FAILSAFE)',
-        exchange: 'TEST',
-        industry: 'FAILSAFE',
-        latest_price: {
-            trade_date: new Date().toISOString().split('T')[0],
-            open: 999.0, high: 999.9, low: 999.0, close: 999.5,
-            volume: 1, change_percent: 0.01,
-        }
-    }];
-}
-// --- Fallback Data ---
-
 export default {
   name: 'Stocks',
-  // 注意: 此處不再依賴 DashboardLayout，假設父元件已提供佈局
   setup() {
     const router = useRouter()
 
@@ -321,7 +298,7 @@ export default {
     // ==========================================
     const loading = ref(false)
     const stocks = ref([])
-    const rawApiResult = ref(null) // 新增: 儲存原始 API 回傳結果
+    // 移除 rawApiResult 狀態
     const search = ref('')
     const marketFilter = ref(null)
     const industryFilter = ref(null)
@@ -329,6 +306,7 @@ export default {
     const detailDialog = ref(false)
     const selectedStock = ref(null)
     const lastUpdateTime = ref('')
+    const showError = ref(false)
     const errorMessage = ref('')
 
     // 篩選選項 (保持不變)
@@ -350,15 +328,41 @@ export default {
     ])
 
     // ==========================================
-    // 計算屬性 (保持不變)
+    // 計算屬性
     // ==========================================
+
+    // 篩選後的股票列表
     const filteredStocks = computed(() => {
       let filtered = stocks.value
 
-      // 篩選邏輯 (為簡潔省略)
+      // ... (篩選邏輯)
+      if (search.value) {
+          const searchLower = search.value.toLowerCase()
+          filtered = filtered.filter(stock =>
+              stock.symbol.toLowerCase().includes(searchLower) ||
+              stock.name.toLowerCase().includes(searchLower)
+          )
+      }
+      if (marketFilter.value) {
+          filtered = filtered.filter(stock => stock.market === marketFilter.value)
+      }
+      if (industryFilter.value) {
+          filtered = filtered.filter(stock => stock.industry === industryFilter.value)
+      }
+      if (changeFilter.value) {
+          if (changeFilter.value === '上漲') {
+              filtered = filtered.filter(stock => stock.change > 0)
+          } else if (changeFilter.value === '下跌') {
+              filtered = filtered.filter(stock => stock.change < 0)
+          } else if (changeFilter.value === '平盤') {
+              filtered = filtered.filter(stock => stock.change === 0)
+          }
+      }
 
       return filtered
     })
+
+    // 統計資料
     const totalStocks = computed(() => stocks.value.length)
     const upCount = computed(() => stocks.value.filter(s => s.change > 0).length)
     const downCount = computed(() => stocks.value.filter(s => s.change < 0).length)
@@ -374,95 +378,50 @@ export default {
     // ==========================================
 
     /**
-     * 轉換資料格式
-     */
-    const transformData = (fetchedStocks) => {
-        return fetchedStocks.map(stock => {
-            const latestPrice = stock.latest_price;
-
-            // 確保所有數據都是有效數字
-            const price = latestPrice ? parseFloat(latestPrice.close) : null;
-            const change = latestPrice ? parseFloat(latestPrice.change_percent) : null;
-            const volume = latestPrice ? parseInt(latestPrice.volume) : null;
-
-            return {
-                id: stock.id,
-                symbol: stock.symbol,
-                name: stock.name,
-                market: stock.exchange || 'N/A', // 假設 market 對應 exchange
-                industry: stock.industry || 'N/A',
-                // 價格資訊
-                price: price,
-                open: latestPrice ? parseFloat(latestPrice.open) : null,
-                high: latestPrice ? parseFloat(latestPrice.high) : null,
-                low: latestPrice ? parseFloat(latestPrice.low) : null,
-                volume: volume,
-                change: change,
-                trade_date: latestPrice ? latestPrice.trade_date : null,
-                is_active: stock.is_active
-            };
-        });
-    };
-
-    /**
-     * 載入股票資料 (最強韌診斷版本)
+     * 載入股票資料 (最終版本，無強制測試邏輯)
      */
     const loadStocks = async () => {
       loading.value = true
       errorMessage.value = ''
-      stocks.value = []
-      rawApiResult.value = null
-
-      let fetchedStocks = [];
-      let loadSuccess = false;
+      showError.value = false
 
       try {
-        // 使用相對路徑 'stocks' 呼叫 API
         const response = await axios.get('stocks', {
           params: {
             per_page: 1000,
             is_active: true,
             has_prices: true
           }
-        });
+        })
 
-        rawApiResult.value = response.data;
-
+        let fetchedStocks = []
         if (response.data.success && response.data.data && response.data.data.data) {
-          fetchedStocks = response.data.data.data;
-          loadSuccess = true;
-        } else {
-            errorMessage.value = '後端 API 回傳成功，但資料為空或結構不符。';
-            console.warn('API 回傳資料結構有問題:', response.data);
+          fetchedStocks = response.data.data.data
         }
 
-      } catch (e) {
-        // API 呼叫失敗 (401, 500, Network error)
-        console.error('載入股票資料失敗 (Catch Block):', e);
-        const status = e.response?.status;
-        errorMessage.value = `API 請求失敗: ${status || '網路錯誤'} - ${e.message}。請檢查 API 連線與認證。`;
-        rawApiResult.value = e.response?.data || { error: e.message, status };
-        // loadSuccess 保持 false
-      } finally {
+        // 轉換資料格式
+        stocks.value = fetchedStocks.map(stock => {
+          const latestPrice = stock.latest_price
 
-        // ------------------------------------------
-        // 核心診斷邏輯: 無論 API 失敗與否，都確保表格有內容
-        // ------------------------------------------
-        if (loadSuccess && fetchedStocks.length > 0) {
-            // 成功載入真實數據
-            stocks.value = transformData(fetchedStocks);
-        } else {
-            // 載入測試數據
-            const fallbackData = getFallbackData();
-            stocks.value = transformData(fallbackData);
-
-            // 更新錯誤提示
-            if (loadSuccess && fetchedStocks.length === 0) {
-                 errorMessage.value = '資料庫中無股票資料（總筆數=0）。正在顯示診斷數據。';
-            } else if (!loadSuccess) {
-                 errorMessage.value += " [強制顯示診斷數據: FAILSAFE]";
-            }
-        }
+          return {
+            id: stock.id,
+            symbol: stock.symbol,
+            name: stock.name,
+            market: stock.exchange || 'N/A',
+            industry: stock.industry || 'N/A',
+            // 價格資訊
+            price: latestPrice ? parseFloat(latestPrice.close) : null,
+            open: latestPrice ? parseFloat(latestPrice.open) : null,
+            high: latestPrice ? parseFloat(latestPrice.high) : null,
+            low: latestPrice ? parseFloat(latestPrice.low) : null,
+            volume: latestPrice ? parseInt(latestPrice.volume) : null,
+            // 這裡使用後端計算的 change_percent
+            change: latestPrice ? parseFloat(latestPrice.change_percent) : null,
+            trade_date: latestPrice ? latestPrice.trade_date : null,
+            // 其他資訊
+            is_active: stock.is_active
+          }
+        })
 
         // 提取產業列表
         const uniqueIndustries = [...new Set(stocks.value.map(s => s.industry).filter(i => i && i !== 'N/A'))]
@@ -471,6 +430,18 @@ export default {
         // 更新最後更新時間
         lastUpdateTime.value = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
+        if (stocks.value.length === 0) {
+            errorMessage.value = 'API 連線成功，但資料庫中沒有滿足條件的股票報價。請檢查資料匯入。'
+            showError.value = true
+        }
+
+        console.log('股票資料載入成功:', stocks.value.length, '筆')
+
+      } catch (error) {
+        console.error('載入股票資料失敗 (Catch Block):', error)
+        errorMessage.value = `載入資料失敗: ${error.response?.data?.message || error.message}`
+        showError.value = true
+      } finally {
         loading.value = false
       }
     }
@@ -482,58 +453,75 @@ export default {
       await loadStocks()
     }
 
-    // 格式化成交量 (保持不變)
+    /**
+     * 格式化成交量
+     */
     const formatVolume = (volume) => {
-      if (volume === null || volume === undefined) return '0'
-      if (volume >= 100000000) { return (volume / 100000000).toFixed(2) + '億' }
-      if (volume >= 10000) { return (volume / 10000).toFixed(0) + '萬' }
+      if (!volume) return '0'
+
+      if (volume >= 100000000) {
+        return (volume / 100000000).toFixed(2) + '億'
+      } else if (volume >= 10000) {
+        return (volume / 10000).toFixed(0) + '萬'
+      }
       return volume.toLocaleString()
     }
 
-    // 格式化日期 (保持不變)
+    /**
+     * 格式化日期
+     */
     const formatDate = (date) => {
       if (!date) return 'N/A'
-      try {
-        const d = new Date(date)
-        return d.toLocaleDateString('zh-TW', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        })
-      } catch (e) {
-        return String(date)
-      }
+      const d = new Date(date)
+      return d.toLocaleDateString('zh-TW', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      })
     }
 
-    // 樣式輔助方法 (保持不變)
+    /**
+     * 取得漲跌顏色
+     */
     const getChangeColor = (change) => {
       if (change > 0) return 'success'
       if (change < 0) return 'error'
       return 'grey'
     }
 
+    /**
+     * 取得價格文字顏色類別
+     */
     const getPriceTextClass = (change) => {
       if (change > 0) return 'text-success'
       if (change < 0) return 'text-error'
       return 'text-grey'
     }
 
+    /**
+     * 查看股票詳情
+     */
     const viewStockDetail = (stock) => {
       selectedStock.value = stock
       detailDialog.value = true
     }
 
+    /**
+     * 查看走勢圖
+     */
     const viewChart = (stock) => {
       console.log('查看走勢圖:', stock)
     }
 
+    /**
+     * 選擇權分析
+     */
     const calculate = (stock) => {
       router.push({
         name: 'BlackScholes',
         query: { symbol: stock.symbol }
       })
     }
-
 
     // ==========================================
     // 生命週期
@@ -549,7 +537,6 @@ export default {
       // 狀態
       loading,
       stocks,
-      rawApiResult,
       search,
       marketFilter,
       industryFilter,
@@ -561,6 +548,7 @@ export default {
       detailDialog,
       selectedStock,
       lastUpdateTime,
+      showError,
       errorMessage,
       // 計算屬性
       filteredStocks,
@@ -586,18 +574,18 @@ export default {
 
 <style scoped>
 .stocks-page {
-  padding: 16px;
+  padding: 16px;
 }
 
 .text-success {
-  color: rgb(76, 175, 80);
+  color: rgb(76, 175, 80);
 }
 
 .text-error {
-  color: rgb(244, 67, 54);
+  color: rgb(244, 67, 54);
 }
 
 .text-grey {
-  color: rgb(158, 158, 158);
+  color: rgb(158, 158, 158);
 }
 </style>

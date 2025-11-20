@@ -27,9 +27,8 @@ class StockController extends Controller
     }
 
     /**
-     * 取得股票列表
-     *
-     * GET /api/stocks
+     * 取得股票列表 (已修正: 計算漲跌幅)
+     * * GET /api/stocks
      */
     public function index(Request $request): JsonResponse
     {
@@ -49,6 +48,11 @@ class StockController extends Controller
             });
         }
 
+        // **修正邏輯: 根據 has_prices 參數篩選只取有價格的股票**
+        if ($request->boolean('has_prices', false)) {
+            $query->whereHas('prices');
+        }
+
         // 排序
         $sortBy = $request->input('sort_by', 'symbol');
         $sortOrder = $request->input('sort_order', 'asc');
@@ -56,7 +60,19 @@ class StockController extends Controller
 
         // 分頁
         $perPage = $request->input('per_page', 20);
+
+        // 使用 with('latestPrice') 確保載入最新的價格數據
         $stocks = $query->with('latestPrice')->paginate($perPage);
+
+        // **修正點：為每一筆最新的價格數據計算漲跌幅**
+        // 必須在 with('latestPrice') 之後執行
+        $stocks->getCollection()->each(function ($stock) {
+            if ($stock->latestPrice) {
+                // 由於 latestPrice 是一個物件，直接修改其屬性，不會寫入資料庫
+                $this->calculateChangeAndPercent($stock);
+            }
+        });
+        // **修正點結束**
 
         return response()->json([
             'success' => true,
@@ -65,9 +81,130 @@ class StockController extends Controller
     }
 
     /**
+     * 計算單一股票的漲跌和漲跌幅，並更新 latestPrice 物件。
+     */
+    protected function calculateChangeAndPercent(Stock $stock): void
+    {
+        $latestPrice = $stock->latestPrice;
+
+        if (!$latestPrice || !$latestPrice->close) {
+            return;
+        }
+
+        // 查找前一個交易日的收盤價
+        // 注意：這裡假設 stock_prices 表中有 stock_id 欄位
+        $previousPrice = StockPrice::where('stock_id', $stock->id)
+            ->where('trade_date', '<', $latestPrice->trade_date) // 找比最新日期小的
+            ->orderBy('trade_date', 'desc')
+            ->value('close');
+
+        if ($previousPrice === null || $previousPrice == 0) {
+            // 如果找不到前一筆資料，設為 0
+            $latestPrice->change = 0.00;
+            $latestPrice->change_percent = 0.00;
+            return;
+        }
+
+        // 計算漲跌和漲跌幅
+        $change = floatval($latestPrice->close) - floatval($previousPrice);
+        $changePercent = ($change / floatval($previousPrice)) * 100;
+
+        // 將計算結果賦值給 latestPrice (會自動格式化為 decimal:2)
+        $latestPrice->change = round($change, 2);
+        $latestPrice->change_percent = round($changePercent, 2);
+    }
+
+
+    /**
+     * 根據 Symbol 取得單一股票的最新價格 (診斷用)
+     * * GET /api/stocks/latest-by-symbol/{symbol}
+     */
+    public function latestBySymbol(string $symbol): JsonResponse
+    {
+        try {
+            // 1. 尋找股票 (Stock)
+            $stock = Stock::where('symbol', $symbol)
+                ->with('latestPrice')
+                ->first();
+
+            if (!$stock) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "股票代碼 {$symbol} 不存在於 Stocks table 中。",
+                    'data' => null
+                ], 404);
+            }
+
+            // 修正點：在診斷 API 中也計算漲跌幅
+            if ($stock->latestPrice) {
+                $this->calculateChangeAndPercent($stock);
+            }
+
+            // 2. 檢查最新價格
+            if (!$stock->latestPrice) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "股票 {$symbol} 存在，但沒有任何價格數據 (StockPrices table 中無資料)。",
+                    'data' => [
+                        'stock' => $stock,
+                        'latest_price' => null
+                    ]
+                ], 200);
+            }
+
+            // 3. 返回數據
+            return response()->json([
+                'success' => true,
+                'message' => "股票 {$symbol} 的最新數據已成功取出。",
+                'data' => [
+                    'stock' => $stock,
+                    'latest_price' => $stock->latestPrice,
+                    'close' => floatval($stock->latestPrice->close) // 驗證價格格式
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error("診斷 {$symbol} 資料時發生錯誤: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => '後端發生錯誤: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 獲取單一股票的最新價格 (保持原結構兼容)
+     * @param string $stockCode
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getLatestPrice(string $stockCode)
+    {
+        try {
+            $stock = Stock::where('symbol', $stockCode)->with('latestPrice')->first();
+
+            if (!$stock) {
+                return response()->json(['message' => 'Stock not found.'], 404);
+            }
+            if (!$stock->latestPrice) {
+                return response()->json(['message' => 'No price data found for this stock.'], 404);
+            }
+
+            // 返回的結構與 index 方法的 latestPrice 保持一致，但簡化
+            return response()->json([
+                'code' => $stockCode,
+                'name' => $stock->name,
+                'latest_price' => floatval($stock->latestPrice->close),
+                'date' => $stock->latestPrice->trade_date,
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Error fetching latest stock price for $stockCode: " . $e->getMessage());
+            return response()->json(['message' => 'Internal server error.'], 500);
+        }
+    }
+
+
+    /**
      * 取得單一股票詳情
-     *
-     * GET /api/stocks/{id}
+     * * GET /api/stocks/{id}
      */
     public function show($id): JsonResponse
     {
@@ -82,8 +219,7 @@ class StockController extends Controller
 
     /**
      * 取得股票歷史價格
-     *
-     * GET /api/stocks/{id}/prices
+     * * GET /api/stocks/{id}/prices
      */
     public function prices(Request $request, int $id): JsonResponse
     {
@@ -151,8 +287,7 @@ class StockController extends Controller
 
     /**
      * 取得股票圖表資料
-     *
-     * GET /api/stocks/{id}/chart
+     * * GET /api/stocks/{id}/chart
      */
     public function chart(Request $request, int $id): JsonResponse
     {
@@ -233,8 +368,7 @@ class StockController extends Controller
 
     /**
      * 取得股票技術指標
-     *
-     * GET /api/stocks/{id}/indicators
+     * * GET /api/stocks/{id}/indicators
      */
     public function indicators(Request $request, int $id): JsonResponse
     {
@@ -345,8 +479,7 @@ class StockController extends Controller
 
     /**
      * 搜尋股票
-     *
-     * POST /api/stocks/search
+     * * POST /api/stocks/search
      */
     public function search(Request $request): JsonResponse
     {
@@ -396,8 +529,7 @@ class StockController extends Controller
 
     /**
      * 匯入股票資料（觸發爬蟲）
-     *
-     * POST /api/stocks/import
+     * * POST /api/stocks/import
      */
     public function import(Request $request): JsonResponse
     {
