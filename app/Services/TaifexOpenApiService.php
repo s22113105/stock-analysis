@@ -8,8 +8,15 @@ use Illuminate\Support\Collection;
 use Carbon\Carbon;
 
 /**
- * 期交所 OpenAPI 服務（最終版本）
- * API 只返回最新資料，不支援歷史查詢
+ * 期交所 OpenAPI 服務（修正版）
+ * 
+ * 使用 TAIFEX OpenAPI 取得選擇權資料
+ * API 文件: https://openapi.taifex.com.tw
+ * 
+ * 注意事項:
+ * 1. API 只返回最新資料，不支援歷史查詢
+ * 2. 資料通常在收盤後 30-60 分鐘更新
+ * 3. 只抓取 TXO (台指選擇權) 資料
  */
 class TaifexOpenApiService
 {
@@ -26,7 +33,8 @@ class TaifexOpenApiService
     /**
      * 取得選擇權每日交易行情（只取 TXO）
      *
-     * 注意：API 只返回最新資料，$date 參數僅用於記錄
+     * @param string|null $date 日期參數（僅用於記錄，API 總是返回最新資料）
+     * @return Collection
      */
     public function getDailyOptionsData(?string $date = null): Collection
     {
@@ -58,7 +66,9 @@ class TaifexOpenApiService
             $data = $response->json();
 
             if (empty($data)) {
-                Log::warning('API 返回空資料');
+                Log::warning('API 返回空資料', [
+                    'note' => '可能是假日或資料尚未更新'
+                ]);
                 return collect();
             }
 
@@ -83,7 +93,7 @@ class TaifexOpenApiService
                 ]);
             }
 
-            // 過濾並轉換資料（不再過濾日期）
+            // 過濾並轉換資料
             $filtered = $this->filterAndTransform($data);
 
             Log::info('TXO 資料過濾完成', [
@@ -103,7 +113,10 @@ class TaifexOpenApiService
     }
 
     /**
-     * 過濾並轉換資料（只保留 TXO，不過濾日期）
+     * 過濾並轉換資料（只保留 TXO）
+     *
+     * @param array $data
+     * @return Collection
      */
     protected function filterAndTransform(array $data): Collection
     {
@@ -129,6 +142,9 @@ class TaifexOpenApiService
 
     /**
      * 轉換單筆記錄
+     *
+     * @param array $item
+     * @return array|null
      */
     protected function transformRecord(array $item): ?array
     {
@@ -137,31 +153,36 @@ class TaifexOpenApiService
             $contract = $item['Contract'] ?? '';
             $contractMonth = $item['ContractMonth(Week)'] ?? '';
             $strikePrice = $this->cleanNumber($item['StrikePrice'] ?? 0);
-            $callPut = $item['CallPut'] ?? '';
+            $callPut = $item['Call/Put'] ?? '';
 
-            // 驗證必要欄位
-            if (empty($contract) || empty($contractMonth) || $strikePrice <= 0) {
+            // 判斷選擇權類型
+            $optionType = match ($callPut) {
+                '買權', 'Call', 'C' => 'CALL',
+                '賣權', 'Put', 'P' => 'PUT',
+                default => null
+            };
+
+            if (!$optionType || $strikePrice <= 0) {
                 return null;
             }
 
-            // 轉換 CallPut
-            $optionType = $this->parseOptionType($callPut);
-            if (!$optionType) {
-                return null;
-            }
+            // 生成選擇權代碼 (格式: TXO 202412 C 21000)
+            $optionCode = sprintf(
+                '%s %s %s %d',
+                $contract,
+                $contractMonth,
+                substr($optionType, 0, 1),
+                intval($strikePrice)
+            );
 
-            // 建立完整的選擇權代碼
-            $typeCode = $optionType === 'call' ? 'C' : 'P';
-            $optionCode = $contract . $contractMonth . $typeCode . intval($strikePrice);
-
-            // 解析到期日
+            // 解析到期月份 (格式: 202412)
             $expiryDate = $this->parseExpiryDate($contractMonth);
 
             // 價格資訊
-            $openPrice = $this->cleanNumber($item['Open'] ?? 0);
-            $highPrice = $this->cleanNumber($item['High'] ?? 0);
-            $lowPrice = $this->cleanNumber($item['Low'] ?? 0);
-            $closePrice = $this->cleanNumber($item['Close'] ?? 0);
+            $openPrice = $this->cleanNumber($item['OpeningPrice'] ?? 0);
+            $highPrice = $this->cleanNumber($item['HighestPrice'] ?? 0);
+            $lowPrice = $this->cleanNumber($item['LowestPrice'] ?? 0);
+            $closePrice = $this->cleanNumber($item['ClosingPrice'] ?? 0);
             $settlementPrice = $this->cleanNumber($item['SettlementPrice'] ?? 0);
 
             // 交易量資訊
@@ -176,7 +197,7 @@ class TaifexOpenApiService
             $spread = $bestAsk > 0 && $bestBid > 0 ? $bestAsk - $bestBid : 0;
             $midPrice = $bestAsk > 0 && $bestBid > 0 ? ($bestAsk + $bestBid) / 2 : 0;
 
-            // 日期處理（使用實際日期）
+            // 日期處理
             $date = $this->parseTradeDate($item);
 
             return [
@@ -192,8 +213,8 @@ class TaifexOpenApiService
                 'low_price' => $lowPrice,
                 'close_price' => $closePrice,
                 'settlement_price' => $settlementPrice,
-                'change' => 0,
-                'change_percent' => 0,
+                'change' => $this->cleanNumber($item['Change'] ?? 0),
+                'change_percent' => $this->cleanNumber($item['ChangePercent'] ?? 0),
                 'volume_total' => $volume,
                 'volume_general' => 0,
                 'volume_afterhours' => 0,
@@ -202,117 +223,218 @@ class TaifexOpenApiService
                 'best_ask' => $bestAsk,
                 'bid_volume' => 0,
                 'ask_volume' => 0,
-                'spread' => $spread,
-                'mid_price' => $midPrice,
-                'date' => $date ?? now()->format('Y-m-d'),
-                'raw_data' => $item
+                'spread' => round($spread, 2),
+                'mid_price' => round($midPrice, 2),
+                'date' => $date ?? date('Y-m-d'),
+                'created_at' => now(),
+                'updated_at' => now(),
             ];
         } catch (\Exception $e) {
-            Log::warning('記錄轉換失敗', [
+            Log::warning('轉換記錄失敗', [
                 'error' => $e->getMessage(),
-                'item' => array_slice($item, 0, 5)
+                'item' => $item
             ]);
             return null;
         }
     }
 
     /**
-     * 解析選擇權類型
+     * 清理數字
+     *
+     * @param mixed $value
+     * @return float
      */
-    protected function parseOptionType(string $callPut): ?string
+    protected function cleanNumber($value): float
     {
-        if (mb_strpos($callPut, '買權') !== false || mb_strpos($callPut, '買') !== false) {
-            return 'call';
+        if (empty($value) || $value === '-' || $value === 'N/A') {
+            return 0;
         }
-        if (mb_strpos($callPut, '賣權') !== false || mb_strpos($callPut, '賣') !== false) {
-            return 'put';
-        }
-        if (stripos($callPut, 'Call') !== false || $callPut === 'C') {
-            return 'call';
-        }
-        if (stripos($callPut, 'Put') !== false || $callPut === 'P') {
-            return 'put';
-        }
-        return null;
+
+        // 移除逗號和其他非數字字符
+        $cleaned = str_replace(',', '', $value);
+        $cleaned = preg_replace('/[^0-9.-]/', '', $cleaned);
+
+        return floatval($cleaned);
     }
 
     /**
-     * 解析到期日
+     * 清理交易量
+     *
+     * @param mixed $value
+     * @return int
      */
-    protected function parseExpiryDate(string $contractMonth): ?string
+    protected function cleanVolume($value): int
+    {
+        return intval($this->cleanNumber($value));
+    }
+
+    /**
+     * 解析到期日期
+     *
+     * @param string $contractMonth 格式: 202412
+     * @return string|null
+     */
+    protected function parseExpiryDate($contractMonth): ?string
     {
         try {
-            // 週選擇權: 202511W1
-            if (preg_match('/^(\d{4})(\d{2})W(\d+)$/', $contractMonth, $matches)) {
+            // 格式: 202412 -> 2024-12
+            if (preg_match('/^(\d{4})(\d{2})$/', $contractMonth, $matches)) {
                 $year = $matches[1];
                 $month = $matches[2];
-                $weekNum = intval($matches[3]);
-                $date = Carbon::create($year, $month, 1);
-                $nthWednesday = $date->nthOfMonth($weekNum, Carbon::WEDNESDAY);
-                return $nthWednesday->format('Y-m-d');
-            }
-
-            // 月選擇權: 202511F1 或 202511
-            if (preg_match('/^(\d{4})(\d{2})(F\d+)?$/', $contractMonth, $matches)) {
-                $year = $matches[1];
-                $month = $matches[2];
-                $date = Carbon::create($year, $month, 1);
-                $thirdWednesday = $date->nthOfMonth(3, Carbon::WEDNESDAY);
+                
+                // 假設到期日為該月第三個星期三（選擇權到期規則）
+                $firstDay = Carbon::createFromFormat('Y-m-d', "{$year}-{$month}-01");
+                $thirdWednesday = $firstDay->copy()->nthOfMonth(3, Carbon::WEDNESDAY);
+                
                 return $thirdWednesday->format('Y-m-d');
             }
-
+            
             return null;
         } catch (\Exception $e) {
+            Log::warning('解析到期日期失敗', [
+                'contract_month' => $contractMonth,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }
 
     /**
      * 解析交易日期
+     *
+     * @param array $item
+     * @return string|null
      */
-    protected function parseTradeDate(array $item): ?string
+    protected function parseTradeDate($item): ?string
     {
-        $dateStr = $item['Date'] ?? '';
-
-        if (empty($dateStr)) {
-            return null;
-        }
-
-        try {
-            if (strlen($dateStr) === 8 && is_numeric($dateStr)) {
-                return Carbon::createFromFormat('Ymd', $dateStr)->format('Y-m-d');
+        // 嘗試多個可能的日期欄位
+        $dateFields = ['TradeDate', 'Date', '交易日期', '日期'];
+        
+        foreach ($dateFields as $field) {
+            if (!empty($item[$field])) {
+                $dateValue = $item[$field];
+                
+                // 處理各種日期格式
+                // 格式1: 20241113
+                if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $dateValue, $matches)) {
+                    return "{$matches[1]}-{$matches[2]}-{$matches[3]}";
+                }
+                
+                // 格式2: 2024/11/13 或 2024-11-13
+                if (preg_match('/^(\d{4})[-\/](\d{2})[-\/](\d{2})$/', $dateValue, $matches)) {
+                    return "{$matches[1]}-{$matches[2]}-{$matches[3]}";
+                }
+                
+                // 格式3: 113/11/13 (民國年)
+                if (preg_match('/^(\d{3})[-\/](\d{2})[-\/](\d{2})$/', $dateValue, $matches)) {
+                    $year = intval($matches[1]) + 1911;
+                    return "{$year}-{$matches[2]}-{$matches[3]}";
+                }
             }
+        }
+        
+        // 如果都沒有，使用當前日期
+        return date('Y-m-d');
+    }
+
+    /**
+     * 檢查資料是否可用
+     *
+     * @return bool
+     */
+    public function checkDataAvailable(): bool
+    {
+        try {
+            $data = $this->getDailyOptionsData();
+            return !$data->isEmpty();
+        } catch (\Exception $e) {
+            Log::error('檢查資料可用性失敗', [
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * 取得最新資料的日期
+     *
+     * @return string|null
+     */
+    public function getLatestDataDate(): ?string
+    {
+        try {
+            $data = $this->getDailyOptionsData();
+            
+            if (!$data->isEmpty()) {
+                $firstItem = $data->first();
+                return $firstItem['date'] ?? null;
+            }
+            
             return null;
         } catch (\Exception $e) {
+            Log::error('取得最新資料日期失敗', [
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }
 
     /**
-     * 清理數字
+     * 取得特定履約價的選擇權資料
+     *
+     * @param float $strikePrice
+     * @param string|null $date
+     * @return Collection
      */
-    protected function cleanNumber($value): float
+    public function getOptionsByStrike(float $strikePrice, ?string $date = null): Collection
     {
-        if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
-            return 0.0;
-        }
-        if (is_string($value)) {
-            $value = str_replace(',', '', $value);
-        }
-        return floatval($value);
+        $data = $this->getDailyOptionsData($date);
+        
+        return $data->filter(function ($item) use ($strikePrice) {
+            return $item['strike_price'] == $strikePrice;
+        });
     }
 
     /**
-     * 清理交易量
+     * 取得價平附近的選擇權資料
+     *
+     * @param float $spotPrice 現貨價格
+     * @param int $strikeCount 上下各取幾檔
+     * @param string|null $date
+     * @return Collection
      */
-    protected function cleanVolume($value): int
+    public function getNearATMOptions(float $spotPrice, int $strikeCount = 5, ?string $date = null): Collection
     {
-        if (is_null($value) || $value === '' || $value === '-' || $value === '--') {
-            return 0;
+        $data = $this->getDailyOptionsData($date);
+        
+        if ($data->isEmpty()) {
+            return collect();
         }
-        if (is_string($value)) {
-            $value = str_replace(',', '', $value);
+        
+        // 找出所有不重複的履約價並排序
+        $strikes = $data->pluck('strike_price')
+            ->unique()
+            ->sort()
+            ->values();
+        
+        // 找出最接近現貨價格的履約價
+        $closestIndex = $strikes->search(function ($strike) use ($spotPrice) {
+            return $strike >= $spotPrice;
+        });
+        
+        if ($closestIndex === false) {
+            $closestIndex = $strikes->count() - 1;
         }
-        return max(0, intval($value));
+        
+        // 取得上下各 N 檔
+        $startIndex = max(0, $closestIndex - $strikeCount);
+        $endIndex = min($strikes->count() - 1, $closestIndex + $strikeCount);
+        
+        $selectedStrikes = $strikes->slice($startIndex, $endIndex - $startIndex + 1);
+        
+        // 過濾出選定的履約價資料
+        return $data->filter(function ($item) use ($selectedStrikes) {
+            return $selectedStrikes->contains($item['strike_price']);
+        });
     }
 }
