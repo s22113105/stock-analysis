@@ -16,16 +16,6 @@ RUN apt-get update && apt-get install -y \
     libicu-dev \
     libfreetype6-dev \
     libjpeg62-turbo-dev \
-<<<<<<< HEAD
-    # ✅ 新增: 安裝 gnupg 這是安裝 Node.js 所需的
-    gnupg \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) gd
-
-# ✅ 新增: 安裝 Node.js (版本 20.x) 和 NPM
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs
-=======
     python3 \
     python3-pip \
     python3-venv \
@@ -44,7 +34,6 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # 建立 python 符號連結（可選）
 RUN ln -sf /usr/bin/python3 /usr/bin/python
->>>>>>> 155f5d1d1fdafab45b1b1afaff5b715ba1b2fa6a
 
 # 安裝 PHP 擴展
 RUN docker-php-ext-install \
@@ -72,13 +61,8 @@ RUN chown -R www-data:www-data /var/www \
     && chmod -R 755 /var/www/storage \
     && chmod -R 755 /var/www/bootstrap/cache
 
-<<<<<<< HEAD
-# (可選) 安裝 Composer 依賴 - 如果您希望在 build image 時就安裝好
-# RUN composer install --no-dev --optimize-autoloader --no-interaction
-=======
 # 安裝 Composer 依賴（開發環境可以移除 --no-dev）
 RUN composer install --optimize-autoloader --no-interaction
->>>>>>> 155f5d1d1fdafab45b1b1afaff5b715ba1b2fa6a
 
 # 暴露端口
 EXPOSE 9000
