@@ -3,7 +3,7 @@ FROM php:8.2-fpm
 # 設定工作目錄
 WORKDIR /var/www
 
-# 安裝系統依賴
+# 安裝系統依賴（包含 Python3）
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -16,8 +16,24 @@ RUN apt-get update && apt-get install -y \
     libicu-dev \
     libfreetype6-dev \
     libjpeg62-turbo-dev \
+    python3 \
+    python3-pip \
+    python3-venv \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) gd
+
+# 安裝 Python 機器學習套件
+RUN pip3 install --no-cache-dir --break-system-packages \
+    numpy \
+    pandas \
+    scikit-learn \
+    tensorflow \
+    statsmodels \
+    scipy \
+    pmdarima
+
+# 建立 python 符號連結（可選）
+RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # 安裝 PHP 擴展
 RUN docker-php-ext-install \
@@ -45,8 +61,8 @@ RUN chown -R www-data:www-data /var/www \
     && chmod -R 755 /var/www/storage \
     && chmod -R 755 /var/www/bootstrap/cache
 
-# 安裝 Composer 依賴
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# 安裝 Composer 依賴（開發環境可以移除 --no-dev）
+RUN composer install --optimize-autoloader --no-interaction
 
 # 暴露端口
 EXPOSE 9000

@@ -379,7 +379,111 @@ class PredictionService
     }
 
     /**
-     * 執行 Python 模型（修正 Windows 環境問題）
+     * 取得 Python 命令路徑（根據環境自動判斷）
+     */
+    private function getPythonCommand(): string
+    {
+        // 優先使用環境變數
+        $envPython = env('PYTHON_PATH');
+        if ($envPython && file_exists($envPython)) {
+            Log::info('使用環境變數指定的 Python 路徑', ['path' => $envPython]);
+            return $envPython;
+        }
+
+        // 根據作業系統自動判斷
+        $os = PHP_OS_FAMILY;
+
+        if ($os === 'Windows') {
+            // Windows 環境
+            $possiblePaths = [
+                'C:\\Python313\\python.exe',
+                'C:\\Python312\\python.exe',
+                'C:\\Python311\\python.exe',
+                'C:\\Python310\\python.exe',
+            ];
+
+            foreach ($possiblePaths as $path) {
+                if (file_exists($path)) {
+                    Log::info('找到 Windows Python 路徑', ['path' => $path]);
+                    return $path;
+                }
+            }
+
+            // 嘗試從 PATH 中找
+            Log::info('使用系統 PATH 中的 python');
+            return 'python';
+        } else {
+            // Linux/Docker 環境
+            $possiblePaths = [
+                '/usr/bin/python3',
+                '/usr/local/bin/python3',
+                '/usr/bin/python',
+            ];
+
+            foreach ($possiblePaths as $path) {
+                if (file_exists($path)) {
+                    Log::info('找到 Linux Python 路徑', ['path' => $path]);
+                    return $path;
+                }
+            }
+
+            // 預設使用 python3
+            Log::info('使用預設 python3 命令');
+            return 'python3';
+        }
+    }
+
+    /**
+     * 取得環境變數設定（根據環境自動判斷）
+     */
+    private function getPythonEnv(): array
+    {
+        $os = PHP_OS_FAMILY;
+
+        if ($os === 'Windows') {
+            // Windows 環境變數
+            $systemPath = getenv('PATH');
+            $systemRoot = getenv('SystemRoot') ?: 'C:\\Windows';
+            $programFiles = getenv('ProgramFiles') ?: 'C:\\Program Files';
+
+            return [
+                'PYTHONPATH' => 'C:\\Python313\\Lib\\site-packages',
+                'PYTHONHOME' => 'C:\\Python313',
+                'PATH' => implode(';', [
+                    'C:\\Python313',
+                    'C:\\Python313\\Scripts',
+                    $systemRoot . '\\System32',
+                    $systemRoot . '\\System32\\Wbem',
+                    $systemRoot . '\\System32\\WindowsPowerShell\\v1.0',
+                    $systemRoot,
+                    $programFiles . '\\Windows Kits\\10\\Windows Performance Toolkit',
+                    $systemPath
+                ]),
+                'SystemRoot' => $systemRoot,
+                'WINDIR' => $systemRoot,
+                'ComSpec' => $systemRoot . '\\System32\\cmd.exe',
+                'TEMP' => sys_get_temp_dir(),
+                'TMP' => sys_get_temp_dir(),
+                'PYTHONIOENCODING' => 'utf-8',
+                'PYTHONUTF8' => '1',
+                'NO_PROXY' => '*',
+                'PYTHONDONTWRITEBYTECODE' => '1',
+                'TF_CPP_MIN_LOG_LEVEL' => '2'
+            ];
+        } else {
+            // Linux/Docker 環境變數（精簡版）
+            return [
+                'PYTHONIOENCODING' => 'utf-8',
+                'PYTHONUTF8' => '1',
+                'PYTHONDONTWRITEBYTECODE' => '1',
+                'TF_CPP_MIN_LOG_LEVEL' => '2',
+                'PATH' => '/usr/local/bin:/usr/bin:/bin'
+            ];
+        }
+    }
+
+    /**
+     * 執行 Python 模型（支援多環境）
      */
     private function executePythonModel(string $modelType, array $inputData): array
     {
@@ -399,8 +503,8 @@ class PredictionService
         file_put_contents($tempFile, $inputJson);
 
         try {
-            // 使用標準 Python 3.13
-            $pythonCommand = 'C:\\Python313\\python.exe';
+            // 根據環境自動選擇 Python 路徑
+            $pythonCommand = $this->getPythonCommand();
 
             // 使用檔案路徑作為參數
             $command = "{$pythonCommand} {$scriptPath} \"{$tempFile}\"";
@@ -412,37 +516,12 @@ class PredictionService
                 'temp_file' => $tempFile
             ]);
 
-            // 取得系統環境變數
-            $systemPath = getenv('PATH');
-            $systemRoot = getenv('SystemRoot') ?: 'C:\\Windows';
-            $programFiles = getenv('ProgramFiles') ?: 'C:\\Program Files';
+            // 取得環境變數
+            $envVars = $this->getPythonEnv();
 
-            // 設定完整的環境變數，包含 Windows 系統路徑
+            // 執行 Python 腳本
             $result = Process::timeout(120)
-                ->env([
-                    'PYTHONPATH' => 'C:\\Python313\\Lib\\site-packages',
-                    'PYTHONHOME' => 'C:\\Python313',
-                    'PATH' => implode(';', [
-                        'C:\\Python313',
-                        'C:\\Python313\\Scripts',
-                        $systemRoot . '\\System32',
-                        $systemRoot . '\\System32\\Wbem',
-                        $systemRoot . '\\System32\\WindowsPowerShell\\v1.0',
-                        $systemRoot,
-                        $programFiles . '\\Windows Kits\\10\\Windows Performance Toolkit',
-                        $systemPath
-                    ]),
-                    'SystemRoot' => $systemRoot,
-                    'WINDIR' => $systemRoot,
-                    'ComSpec' => $systemRoot . '\\System32\\cmd.exe',
-                    'TEMP' => sys_get_temp_dir(),
-                    'TMP' => sys_get_temp_dir(),
-                    'PYTHONIOENCODING' => 'utf-8',
-                    'PYTHONUTF8' => '1',
-                    'NO_PROXY' => '*',  // 避免網路代理問題
-                    'PYTHONDONTWRITEBYTECODE' => '1',  // 避免寫入 .pyc 檔案
-                    'TF_CPP_MIN_LOG_LEVEL' => '2'  // 減少 TensorFlow 輸出
-                ])
+                ->env($envVars)
                 ->run($command);
 
             if (!$result->successful()) {
