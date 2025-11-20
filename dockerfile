@@ -16,8 +16,14 @@ RUN apt-get update && apt-get install -y \
     libicu-dev \
     libfreetype6-dev \
     libjpeg62-turbo-dev \
+    # ✅ 新增: 安裝 gnupg 這是安裝 Node.js 所需的
+    gnupg \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) gd
+
+# ✅ 新增: 安裝 Node.js (版本 20.x) 和 NPM
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 # 安裝 PHP 擴展
 RUN docker-php-ext-install \
@@ -37,7 +43,7 @@ RUN pecl install redis \
 # 安裝 Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# 複製應用程式
+# 複製應用程式 (注意：本機開發時通常透過 volume 掛載，這行主要是為了部署或 build image)
 COPY . /var/www
 
 # 設定權限
@@ -45,8 +51,8 @@ RUN chown -R www-data:www-data /var/www \
     && chmod -R 755 /var/www/storage \
     && chmod -R 755 /var/www/bootstrap/cache
 
-# 安裝 Composer 依賴
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# (可選) 安裝 Composer 依賴 - 如果您希望在 build image 時就安裝好
+# RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # 暴露端口
 EXPOSE 9000
