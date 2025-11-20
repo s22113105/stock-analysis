@@ -10,8 +10,7 @@ use Illuminate\Support\Collection;
 
 /**
  * 台灣證券交易所 API 服務
- * 
- * 使用 TWSE OpenAPI 取得股票資料
+ * * 使用 TWSE OpenAPI 取得股票資料
  * API 文件: https://openapi.twse.com.tw
  */
 class TwseApiService
@@ -25,16 +24,18 @@ class TwseApiService
     {
         // 舊版 API (用於特定功能)
         $this->baseUrl = config('services.twse.base_url', 'https://www.twse.com.tw');
+        
         // OpenAPI (主要使用)
-        $this->openApiUrl = 'https://openapi.twse.com.tw';
+        // ✅ 修正: 加上 /v1 版本號
+        $this->openApiUrl = 'https://openapi.twse.com.tw/v1';
+        
         $this->timeout = config('services.twse.timeout', 30);
         $this->retries = config('services.twse.retries', 3);
     }
 
     /**
      * 取得所有股票當日行情 (使用 OpenAPI)
-     * 
-     * @param string $dateString 日期格式 Ymd (例: 20251113)
+     * * @param string $dateString 日期格式 Ymd (例: 20251113)
      * @return Collection
      */
     public function getStockDayAll($dateString)
@@ -50,12 +51,10 @@ class TwseApiService
 
         try {
             // OpenAPI URL
+            // 注意: STOCK_DAY_ALL 不需要 date 參數，它總是返回最新資料
             $url = "{$this->openApiUrl}/exchangeReport/STOCK_DAY_ALL";
             
-            $params = [
-                'response' => 'json',
-                'date' => $dateString
-            ];
+            $params = []; 
 
             Log::info('發送 TWSE OpenAPI 請求', [
                 'url' => $url,
@@ -111,8 +110,7 @@ class TwseApiService
 
     /**
      * 轉換股票資料格式
-     * 
-     * @param array $item 原始資料
+     * * @param array $item 原始資料
      * @param string $dateString 日期
      * @return array
      */
@@ -123,6 +121,7 @@ class TwseApiService
         return [
             'symbol' => $item['Code'] ?? $item['股票代號'] ?? '',
             'name' => $item['Name'] ?? $item['股票名稱'] ?? '',
+            // 如果 API 沒有回傳日期，就使用傳入的日期
             'trade_date' => $this->formatDate($dateString),
             'volume' => $this->parseNumber($item['TradeVolume'] ?? $item['成交股數'] ?? 0),
             'turnover' => $this->parseNumber($item['TradeValue'] ?? $item['成交金額'] ?? 0),
@@ -137,8 +136,7 @@ class TwseApiService
 
     /**
      * 取得單一股票的每日行情 (舊版 API - 取得整月資料)
-     * 
-     * @param string $symbol 股票代碼
+     * * @param string $symbol 股票代碼
      * @param string|null $date 日期 (Y-m-d)
      * @return Collection
      */
@@ -181,8 +179,7 @@ class TwseApiService
 
     /**
      * 取得所有股票列表
-     * 
-     * @return Collection
+     * * @return Collection
      */
     public function getAllStockSymbols()
     {
@@ -209,9 +206,8 @@ class TwseApiService
     }
 
     /**
-     * 發送 HTTP 請求 (舊版 API)
-     * 
-     * @param string $endpoint
+     * 發送 HTTP 請求 (舊版 API) - 增加 User-Agent 偽裝
+     * * @param string $endpoint
      * @param array $params
      * @return array|null
      */
@@ -230,9 +226,17 @@ class TwseApiService
         try {
             Log::info("發送請求至 TWSE API", ['url' => $url, 'params' => $params]);
 
-            $response = Http::timeout($this->timeout)
-                ->retry($this->retries, 1000)
-                ->get($url, $params);
+            // ✅ 修正: 加入 User-Agent Header，偽裝成瀏覽器
+            $response = Http::withHeaders([
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept' => 'application/json, text/javascript, */*; q=0.01',
+                'Accept-Language' => 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer' => 'https://www.twse.com.tw/zh/page/trading/exchange/STOCK_DAY.html',
+                'X-Requested-With' => 'XMLHttpRequest',
+            ])
+            ->timeout($this->timeout)
+            ->retry($this->retries, 2000) // 增加 retry 間隔到 2 秒
+            ->get($url, $params);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -243,6 +247,7 @@ class TwseApiService
                         'status' => $data['stat'],
                         'params' => $params
                     ]);
+                    // 可能是因為查詢的日期該股票未上市或無資料，不視為嚴重錯誤
                     return null;
                 }
 
@@ -269,8 +274,7 @@ class TwseApiService
 
     /**
      * 從標題中提取股票名稱
-     * 
-     * @param string $title
+     * * @param string $title
      * @return string
      */
     protected function extractStockName($title)
@@ -284,8 +288,7 @@ class TwseApiService
 
     /**
      * 解析民國年日期為西元年
-     * 
-     * @param string $dateString
+     * * @param string $dateString
      * @return string|null
      */
     protected function parseROCDate($dateString)
@@ -307,8 +310,7 @@ class TwseApiService
 
     /**
      * 格式化日期 (從 Ymd 轉為 Y-m-d)
-     * 
-     * @param string $dateString
+     * * @param string $dateString
      * @return string
      */
     protected function formatDate($dateString)
@@ -334,8 +336,7 @@ class TwseApiService
 
     /**
      * 解析數字 (移除逗號和特殊符號)
-     * 
-     * @param mixed $value
+     * * @param mixed $value
      * @return float
      */
     protected function parseNumber($value)
@@ -358,8 +359,7 @@ class TwseApiService
 
     /**
      * 解析價格
-     * 
-     * @param mixed $value
+     * * @param mixed $value
      * @return float|null
      */
     protected function parsePrice($value)
@@ -376,8 +376,7 @@ class TwseApiService
 
     /**
      * 檢查特定日期是否有資料
-     * 
-     * @param string $symbol 股票代碼
+     * * @param string $symbol 股票代碼
      * @param string|null $date 日期
      * @return bool
      */
@@ -404,8 +403,7 @@ class TwseApiService
 
     /**
      * 取得最近有資料的日期
-     * 
-     * @param int $maxDaysBack 最多往回幾天
+     * * @param int $maxDaysBack 最多往回幾天
      * @return string|null
      */
     public function getLatestAvailableDate($maxDaysBack = 10)
@@ -432,8 +430,7 @@ class TwseApiService
 
     /**
      * 批次取得多檔股票資料
-     * 
-     * @param array $symbols 股票代碼陣列
+     * * @param array $symbols 股票代碼陣列
      * @param string|null $date 日期
      * @return Collection
      */
