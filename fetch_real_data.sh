@@ -123,15 +123,15 @@ TMP_FILE="storage/logs/crawler/last_run.tmp"
 for symbol in "${STOCK_ARRAY[@]}"; do
     CURRENT=$((CURRENT + 1))
     symbol=$(echo $symbol | xargs) # 去除空白
-    
+
     echo "=========================================="
     echo "[$CURRENT/$TOTAL_STOCKS] 處理股票: $symbol"
     echo "=========================================="
-    
+
     PROCESSED_MONTHS="|"
     STOCK_FETCH_COUNT=0
     CONSECUTIVE_FAILURES=0
-    
+
     for (( i=0; i<DAYS; i++ )); do
         # 日期計算
         if date -d "today" &>/dev/null; then
@@ -142,26 +142,26 @@ for symbol in "${STOCK_ARRAY[@]}"; do
         fi
 
         if [ -z "$DATE" ]; then continue; fi
-        
+
         YM=${DATE:0:7} # 取得 YYYY-MM
-        
+
         # 檢查月份是否重複
         if [[ "$PROCESSED_MONTHS" == *"|$YM|"* ]]; then
             continue
         fi
-        
+
         PROCESSED_MONTHS="${PROCESSED_MONTHS}${YM}|"
-        
+
         echo -n "  📅 正在抓取 $YM 資料 (基準日: $DATE) ... "
-        
+
         # ✅ 核心修正: 使用 docker-compose exec -T 執行爬蟲
         # 將輸出導向容器內的暫存檔，然後再讀出來
         docker-compose exec -T app bash -c "php artisan crawler:stocks --symbol='$symbol' --date='$DATE' --sync > $TMP_FILE 2>&1"
         EXIT_CODE=$?
-        
+
         # 讀取容器內的暫存檔內容
         OUTPUT=$(docker-compose exec -T app cat $TMP_FILE)
-        
+
         # 判斷邏輯
         if [ $EXIT_CODE -eq 0 ] && echo "$OUTPUT" | grep -q "成功\|更新\|完成\|取得"; then
             echo "✅ 完成"
@@ -180,20 +180,20 @@ for symbol in "${STOCK_ARRAY[@]}"; do
             echo "     ----------------------------------------"
             # 寫入 host 端 log 方便查看
             echo "[$DATE $symbol] $OUTPUT" >> storage/logs/crawler/errors.log
-            
+
             FAIL_COUNT=$((FAIL_COUNT + 1))
             CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
             echo "     ❄️ 偵測到錯誤，冷卻 10 秒..."
             sleep 10
         fi
-        
+
         if [ $CONSECUTIVE_FAILURES -ge 3 ]; then
              echo "     🔥 連續失敗過多，暫停 30 秒..."
              sleep 30
              CONSECUTIVE_FAILURES=0
         fi
     done
-    
+
     if [ $STOCK_FETCH_COUNT -gt 0 ]; then
         echo "  ✅ $symbol 資料同步完成"
     else

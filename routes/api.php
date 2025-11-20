@@ -8,7 +8,7 @@ use App\Http\Controllers\OptionController;
 use App\Http\Controllers\VolatilityController;
 use App\Http\Controllers\Api\PredictionController;
 use App\Http\Controllers\BacktestController;
-use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\RealtimeController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TradingController;
@@ -57,10 +57,14 @@ Route::prefix('public')->group(function () {
 |--------------------------------------------------------------------------
 */
 Route::prefix('dashboard')->group(function () {
+    // 熱門股票走勢
+    Route::get('/stock-trends', [DashboardController::class, 'stockTrends']);
+
+    // 波動率概覽
+    Route::get('/volatility-overview', [DashboardController::class, 'volatilityOverview']);
+
+    // 統計資訊
     Route::get('/stats', [DashboardController::class, 'stats']);
-    Route::get('/portfolio', [DashboardController::class, 'portfolio']);
-    Route::get('/performance', [DashboardController::class, 'performance']);
-    Route::get('/alerts', [DashboardController::class, 'alerts']);
 });
 
 /*
