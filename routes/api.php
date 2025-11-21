@@ -5,11 +5,8 @@ use Illuminate\Support\Facades\Route;
 
 /**
  * ============================================
- * API Routes 完整範例
+ * API Routes (修正版)
  * ============================================
- *
- * 這是完整的 routes/api.php 範例
- * 包含所有必要的路由設定
  */
 
 // 導入所有需要的控制器
@@ -21,6 +18,9 @@ use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\VolatilityController;
 use App\Http\Controllers\Api\PredictionController;
 use App\Http\Controllers\BacktestController;
+// ⚠️ 問題 1 修正: 缺少 CrawlerController 的引入
+use App\Http\Controllers\CrawlerController;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -31,9 +31,12 @@ use App\Http\Controllers\BacktestController;
 // 公開路由 (不需要認證)
 // ==========================================
 
-// 認證相關
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+// ⚠️ 問題 2 修正: 認證路由缺少 /auth 前綴
+// 前端呼叫的是 /api/auth/register,所以需要加上 auth 前綴
+Route::prefix('auth')->group(function () {
+    Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/login', [AuthController::class, 'login']);
+});
 
 // ==========================================
 // Dashboard API (儀表板)
@@ -51,7 +54,7 @@ Route::prefix('dashboard')->group(function () {
     // 警示資訊 (如果有實作)
     Route::get('/alerts', [DashboardController::class, 'alerts']);
 
-    // 🌟 新增: 圖表資料端點
+    // 🌟 圖表資料端點
     Route::get('/stock-trends', [DashboardController::class, 'stockTrends']);
     Route::get('/volatility-overview', [DashboardController::class, 'volatilityOverview']);
 });
@@ -103,6 +106,9 @@ Route::prefix('volatility')->group(function () {
 // Prediction API (預測)
 // ==========================================
 Route::prefix('predictions')->group(function () {
+    // 執行預測 (通用端點)
+    Route::post('/run', [PredictionController::class, 'run']);
+
     // LSTM 預測
     Route::post('/lstm', [PredictionController::class, 'lstm']);
 
