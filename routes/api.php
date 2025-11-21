@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 /**
  * ============================================
- * API Routes (修正版)
+ * API Routes - Stock_Analysis System
  * ============================================
  */
 
@@ -13,12 +13,12 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\OptionController;
+use App\Http\Controllers\OptionAnalysisController;  // 新增
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\VolatilityController;
 use App\Http\Controllers\Api\PredictionController;
 use App\Http\Controllers\BacktestController;
-// ⚠️ 問題 1 修正: 缺少 CrawlerController 的引入
 use App\Http\Controllers\CrawlerController;
 
 /*
@@ -31,8 +31,7 @@ use App\Http\Controllers\CrawlerController;
 // 公開路由 (不需要認證)
 // ==========================================
 
-// ⚠️ 問題 2 修正: 認證路由缺少 /auth 前綴
-// 前端呼叫的是 /api/auth/register,所以需要加上 auth 前綴
+// 認證路由
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
@@ -42,19 +41,10 @@ Route::prefix('auth')->group(function () {
 // Dashboard API (儀表板)
 // ==========================================
 Route::prefix('dashboard')->group(function () {
-    // 基本統計資訊
     Route::get('/stats', [DashboardController::class, 'stats']);
-
-    // 投資組合 (如果有實作)
     Route::get('/portfolio', [DashboardController::class, 'portfolio']);
-
-    // 績效資訊 (如果有實作)
     Route::get('/performance', [DashboardController::class, 'performance']);
-
-    // 警示資訊 (如果有實作)
     Route::get('/alerts', [DashboardController::class, 'alerts']);
-
-    // 🌟 圖表資料端點
     Route::get('/stock-trends', [DashboardController::class, 'stockTrends']);
     Route::get('/volatility-overview', [DashboardController::class, 'volatilityOverview']);
 });
@@ -63,16 +53,11 @@ Route::prefix('dashboard')->group(function () {
 // Stock API (股票)
 // ==========================================
 Route::prefix('stocks')->group(function () {
-    // 列表和查詢
     Route::get('/', [StockController::class, 'index']);
     Route::get('/{id}', [StockController::class, 'show']);
     Route::get('/symbol/{symbol}', [StockController::class, 'getBySymbol']);
-
-    // 價格資料
     Route::get('/{id}/prices', [StockController::class, 'prices']);
     Route::get('/{id}/latest-price', [StockController::class, 'latestPrice']);
-
-    // 統計資訊
     Route::get('/{id}/statistics', [StockController::class, 'statistics']);
 });
 
@@ -80,9 +65,31 @@ Route::prefix('stocks')->group(function () {
 // Option API (選擇權)
 // ==========================================
 Route::prefix('options')->group(function () {
+    // 基本 CRUD
     Route::get('/', [OptionController::class, 'index']);
     Route::get('/{id}', [OptionController::class, 'show']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
+
+    // 🌟 TXO 分析功能 (新增)
+    Route::prefix('txo')->group(function () {
+        // TXO 收盤價走勢圖
+        Route::get('/trend', [OptionAnalysisController::class, 'getTxoTrend']);
+
+        // 成交量分析 (Call vs Put)
+        Route::get('/volume-analysis', [OptionAnalysisController::class, 'getVolumeAnalysis']);
+
+        // 未平倉量分析 (OI Analysis)
+        Route::get('/oi-analysis', [OptionAnalysisController::class, 'getOiAnalysis']);
+
+        // 隱含波動率分析 (IV Analysis)
+        Route::get('/iv-analysis', [OptionAnalysisController::class, 'getIvAnalysis']);
+
+        // 市場情緒總覽
+        Route::get('/sentiment', [OptionAnalysisController::class, 'getSentiment']);
+
+        // OI 分佈 (依履約價)
+        Route::get('/oi-distribution', [OptionAnalysisController::class, 'getOiDistribution']);
+    });
 });
 
 // ==========================================
@@ -106,20 +113,12 @@ Route::prefix('volatility')->group(function () {
 // Prediction API (預測)
 // ==========================================
 Route::prefix('predictions')->group(function () {
-    // 執行預測 (通用端點)
     Route::post('/run', [PredictionController::class, 'run']);
-
-    // LSTM 預測
     Route::post('/lstm', [PredictionController::class, 'lstm']);
-
-    // ARIMA 預測
     Route::post('/arima', [PredictionController::class, 'arima']);
-
-    // GARCH 預測
     Route::post('/garch', [PredictionController::class, 'garch']);
-
-    // 取得歷史預測
-    Route::get('/history/{stock_id}', [PredictionController::class, 'history']);
+    Route::get('/history', [PredictionController::class, 'history']);
+    Route::get('/{id}', [PredictionController::class, 'show']);
 });
 
 // ==========================================
@@ -127,20 +126,30 @@ Route::prefix('predictions')->group(function () {
 // ==========================================
 Route::prefix('backtest')->group(function () {
     Route::post('/run', [BacktestController::class, 'run']);
+    Route::get('/strategies', [BacktestController::class, 'strategies']);
     Route::get('/results', [BacktestController::class, 'results']);
-    Route::get('/results/{id}', [BacktestController::class, 'show']);
+    Route::get('/results/{id}', [BacktestController::class, 'showResult']);
 });
 
 // ==========================================
 // Crawler API (爬蟲管理)
 // ==========================================
-Route::prefix('crawler')->middleware('auth:sanctum')->group(function () {
-    // 手動觸發爬蟲
+Route::prefix('crawler')->group(function () {
     Route::post('/stocks', [CrawlerController::class, 'crawlStocks']);
     Route::post('/options', [CrawlerController::class, 'crawlOptions']);
-
-    // 爬蟲狀態
     Route::get('/status', [CrawlerController::class, 'status']);
+    Route::get('/logs', [CrawlerController::class, 'logs']);
+});
+
+// ==========================================
+// 測試路由 (開發用)
+// ==========================================
+Route::get('/test', function () {
+    return response()->json([
+        'success' => true,
+        'message' => 'API is working!',
+        'timestamp' => now()->toIso8601String()
+    ]);
 });
 
 // ==========================================
@@ -153,31 +162,5 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // 登出
-    Route::post('/logout', [AuthController::class, 'logout']);
-
-    // 其他需要認證的路由...
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
 });
-
-// ==========================================
-// 健康檢查
-// ==========================================
-Route::get('/health', function () {
-    return response()->json([
-        'status' => 'ok',
-        'timestamp' => now()->toISOString(),
-        'service' => 'Stock Analysis API'
-    ]);
-});
-
-// ==========================================
-// 測試路由 (開發環境)
-// ==========================================
-if (app()->environment('local')) {
-    Route::get('/test', function () {
-        return response()->json([
-            'message' => 'API is working!',
-            'environment' => app()->environment(),
-            'timestamp' => now()->toISOString()
-        ]);
-    });
-}

@@ -1,206 +1,150 @@
 <template>
   <div class="options-page">
-    <v-row>
+    <!-- 頁面標題 -->
+    <v-row class="mb-4">
+      <v-col>
+        <h1 class="text-h4">選擇權分析</h1>
+        <p class="text-subtitle-1 text-grey">TXO 臺指選擇權市場分析</p>
+      </v-col>
+      <v-col cols="auto">
+        <v-btn color="primary" @click="refreshAllData" :loading="loading">
+          <v-icon left>mdi-refresh</v-icon>
+          更新資料
+        </v-btn>
+      </v-col>
+    </v-row>
+
+    <!-- 市場情緒總覽卡片 -->
+    <v-row class="mb-4">
       <v-col cols="12">
         <v-card elevation="2">
-          <v-card-title>
-            <v-icon class="mr-2">mdi-format-list-bulleted</v-icon>
-            選擇權鏈
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-heart-pulse</v-icon>
+            市場情緒總覽
             <v-spacer></v-spacer>
-            <v-btn color="primary" prepend-icon="mdi-refresh" @click="refreshData">
-              更新資料
-            </v-btn>
+            <v-chip v-if="sentiment" :color="sentiment.sentiment.color" size="large">
+              {{ sentiment.sentiment.description }}
+            </v-chip>
           </v-card-title>
-
           <v-card-text>
-            <!-- 篩選條件 -->
-            <v-row class="mb-4">
+            <v-row v-if="sentiment">
+              <!-- Put/Call Ratio -->
               <v-col cols="12" md="3">
-                <v-text-field
-                  v-model="underlyingSymbol"
-                  label="標的股票代碼"
-                  density="compact"
-                  hide-details
-                  append-inner-icon="mdi-magnify"
-                  @click:append-inner="searchOptions"
-                ></v-text-field>
+                <v-card outlined class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">Put/Call 成交量比</div>
+                  <div class="text-h5">{{ sentiment.put_call_volume_ratio }}</div>
+                  <div class="text-caption">
+                    <span :class="sentiment.put_call_volume_ratio > 1 ? 'text-error' : 'text-success'">
+                      {{ sentiment.put_call_volume_ratio > 1 ? '偏空' : '偏多' }}
+                    </span>
+                  </div>
+                </v-card>
               </v-col>
+
+              <!-- 平均 IV -->
               <v-col cols="12" md="3">
-                <v-select
-                  v-model="selectedExpiry"
-                  :items="expiryDates"
-                  label="到期日"
-                  density="compact"
-                  hide-details
-                ></v-select>
+                <v-card outlined class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">平均隱含波動率</div>
+                  <div class="text-h5">{{ sentiment.avg_iv ? (sentiment.avg_iv * 100).toFixed(2) + '%' : 'N/A' }}</div>
+                  <div class="text-caption">
+                    <v-chip v-if="sentiment.iv_level" :color="sentiment.iv_level.color" size="small">
+                      {{ sentiment.iv_level.description }}
+                    </v-chip>
+                  </div>
+                </v-card>
               </v-col>
-              <v-col cols="12" md="2">
-                <v-select
-                  v-model="optionType"
-                  :items="['全部', 'Call', 'Put']"
-                  label="類型"
-                  density="compact"
-                  hide-details
-                ></v-select>
+
+              <!-- 總成交量 -->
+              <v-col cols="12" md="3">
+                <v-card outlined class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">今日總成交量</div>
+                  <div class="text-h5">{{ formatNumber(sentiment.total_volume) }}</div>
+                  <div class="text-caption text-grey">口</div>
+                </v-card>
               </v-col>
-              <v-col cols="12" md="2">
-                <v-select
-                  v-model="moneyness"
-                  :items="['全部', '價內', '價平', '價外']"
-                  label="價性"
-                  density="compact"
-                  hide-details
-                ></v-select>
-              </v-col>
-              <v-col cols="12" md="2">
-                <v-btn color="secondary" block @click="compareOptions">
-                  比較分析
-                </v-btn>
+
+              <!-- 總未平倉量 -->
+              <v-col cols="12" md="3">
+                <v-card outlined class="pa-3 text-center">
+                  <div class="text-caption text-grey mb-1">總未平倉量</div>
+                  <div class="text-h5">{{ formatNumber(sentiment.total_oi) }}</div>
+                  <div class="text-caption text-grey">口</div>
+                </v-card>
               </v-col>
             </v-row>
-
-            <!-- 標的股票資訊卡 -->
-            <v-card v-if="underlyingStock" class="mb-4" outlined>
-              <v-card-text>
-                <v-row align="center">
-                  <v-col cols="auto">
-                    <div class="text-h5">{{ underlyingStock.symbol }} - {{ underlyingStock.name }}</div>
-                  </v-col>
-                  <v-col cols="auto">
-                    <div class="text-h4">${{ underlyingStock.price }}</div>
-                  </v-col>
-                  <v-col cols="auto">
-                    <v-chip :color="underlyingStock.change >= 0 ? 'success' : 'error'">
-                      {{ underlyingStock.change >= 0 ? '+' : '' }}{{ underlyingStock.change }}%
-                    </v-chip>
-                  </v-col>
-                  <v-spacer></v-spacer>
-                  <v-col cols="auto">
-                    <v-chip class="mr-2">
-                      <v-icon start>mdi-chart-bell-curve</v-icon>
-                      HV: {{ underlyingStock.hv }}%
-                    </v-chip>
-                    <v-chip>
-                      <v-icon start>mdi-calendar</v-icon>
-                      {{ underlyingStock.tradingDays }} 天
-                    </v-chip>
-                  </v-col>
-                </v-row>
-              </v-card-text>
-            </v-card>
-
-            <!-- 選擇權鏈表格 -->
-            <div class="option-chain-container">
-              <v-row>
-                <!-- Call 選擇權 -->
-                <v-col cols="12" md="6">
-                  <div class="text-h6 text-center mb-2 text-success">Call 買權</div>
-                  <v-data-table
-                    :headers="callHeaders"
-                    :items="callOptions"
-                    :items-per-page="15"
-                    item-value="strike"
-                    density="compact"
-                    class="elevation-1"
-                  >
-                    <template v-slot:item.strike="{ item }">
-                      <span :class="getStrikeClass(item.strike, 'call')">
-                        {{ item.strike }}
-                      </span>
-                    </template>
-
-                    <template v-slot:item.iv="{ item }">
-                      <v-chip size="small" :color="getIVColor(item.iv)">
-                        {{ item.iv }}%
-                      </v-chip>
-                    </template>
-
-                    <template v-slot:item.change="{ item }">
-                      <span :class="item.change >= 0 ? 'text-success' : 'text-error'">
-                        {{ item.change >= 0 ? '+' : '' }}{{ item.change }}%
-                      </span>
-                    </template>
-
-                    <template v-slot:item.actions="{ item }">
-                      <v-btn icon="mdi-calculator" size="small" variant="text" @click="calculateBS(item, 'call')"></v-btn>
-                      <v-btn icon="mdi-chart-line" size="small" variant="text" @click="viewGreeks(item, 'call')"></v-btn>
-                    </template>
-                  </v-data-table>
-                </v-col>
-
-                <!-- Put 選擇權 -->
-                <v-col cols="12" md="6">
-                  <div class="text-h6 text-center mb-2 text-error">Put 賣權</div>
-                  <v-data-table
-                    :headers="putHeaders"
-                    :items="putOptions"
-                    :items-per-page="15"
-                    item-value="strike"
-                    density="compact"
-                    class="elevation-1"
-                  >
-                    <template v-slot:item.strike="{ item }">
-                      <span :class="getStrikeClass(item.strike, 'put')">
-                        {{ item.strike }}
-                      </span>
-                    </template>
-
-                    <template v-slot:item.iv="{ item }">
-                      <v-chip size="small" :color="getIVColor(item.iv)">
-                        {{ item.iv }}%
-                      </v-chip>
-                    </template>
-
-                    <template v-slot:item.change="{ item }">
-                      <span :class="item.change >= 0 ? 'text-success' : 'text-error'">
-                        {{ item.change >= 0 ? '+' : '' }}{{ item.change }}%
-                      </span>
-                    </template>
-
-                    <template v-slot:item.actions="{ item }">
-                      <v-btn icon="mdi-calculator" size="small" variant="text" @click="calculateBS(item, 'put')"></v-btn>
-                      <v-btn icon="mdi-chart-line" size="small" variant="text" @click="viewGreeks(item, 'put')"></v-btn>
-                    </template>
-                  </v-data-table>
-                </v-col>
-              </v-row>
-            </div>
+            <v-row v-else>
+              <v-col class="text-center py-8">
+                <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                <p class="mt-2 text-grey">載入中...</p>
+              </v-col>
+            </v-row>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
 
-    <!-- 選擇權統計資訊 -->
-    <v-row class="mt-4">
-      <v-col cols="12" md="3">
-        <v-card>
+    <!-- 圖表區域 -->
+    <v-row>
+      <!-- TXO 走勢圖 -->
+      <v-col cols="12" md="6">
+        <v-card elevation="2">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-chart-line</v-icon>
+            TXO 平均收盤價走勢
+            <v-spacer></v-spacer>
+            <v-btn-toggle v-model="trendPeriod" mandatory density="compact" @update:model-value="loadTrend">
+              <v-btn value="7">7天</v-btn>
+              <v-btn value="30">30天</v-btn>
+              <v-btn value="90">90天</v-btn>
+            </v-btn-toggle>
+          </v-card-title>
           <v-card-text>
-            <div class="text-subtitle-2 text-grey">Call OI 總量</div>
-            <div class="text-h5">{{ formatNumber(callOI) }}</div>
+            <canvas ref="trendChart"></canvas>
           </v-card-text>
         </v-card>
       </v-col>
-      <v-col cols="12" md="3">
-        <v-card>
+
+      <!-- 成交量分析 -->
+      <v-col cols="12" md="6">
+        <v-card elevation="2">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-chart-bar</v-icon>
+            Call vs Put 成交量分析
+          </v-card-title>
           <v-card-text>
-            <div class="text-subtitle-2 text-grey">Put OI 總量</div>
-            <div class="text-h5">{{ formatNumber(putOI) }}</div>
+            <canvas ref="volumeChart"></canvas>
           </v-card-text>
         </v-card>
       </v-col>
-      <v-col cols="12" md="3">
-        <v-card>
+
+      <!-- IV 趨勢圖 -->
+      <v-col cols="12" md="6">
+        <v-card elevation="2">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-chart-timeline-variant</v-icon>
+            隱含波動率趨勢
+            <v-spacer></v-spacer>
+            <v-btn-toggle v-model="ivPeriod" mandatory density="compact" @update:model-value="loadIvAnalysis">
+              <v-btn value="7">7天</v-btn>
+              <v-btn value="30">30天</v-btn>
+              <v-btn value="90">90天</v-btn>
+            </v-btn-toggle>
+          </v-card-title>
           <v-card-text>
-            <div class="text-subtitle-2 text-grey">Put/Call Ratio</div>
-            <div class="text-h5">{{ (putOI / callOI).toFixed(2) }}</div>
+            <canvas ref="ivChart"></canvas>
           </v-card-text>
         </v-card>
       </v-col>
-      <v-col cols="12" md="3">
-        <v-card>
+
+      <!-- OI 分佈圖 -->
+      <v-col cols="12" md="6">
+        <v-card elevation="2">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-chart-box-outline</v-icon>
+            未平倉量分佈
+          </v-card-title>
           <v-card-text>
-            <div class="text-subtitle-2 text-grey">Max Pain</div>
-            <div class="text-h5">${{ maxPain }}</div>
+            <canvas ref="oiChart"></canvas>
           </v-card-text>
         </v-card>
       </v-col>
@@ -209,141 +153,341 @@
 </template>
 
 <script>
-import { ref, computed } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import axios from 'axios'
+import Chart from 'chart.js/auto'
 
 export default {
   name: 'Options',
   setup() {
     const router = useRouter()
 
-    // 狀態
-    const underlyingSymbol = ref('2330')
-    const selectedExpiry = ref('2025-12-17')
-    const optionType = ref('全部')
-    const moneyness = ref('全部')
+    // 資料狀態
+    const loading = ref(false)
 
-    const expiryDates = ['2025-11-20', '2025-12-17', '2026-01-21', '2026-02-18']
+    // 圖表實例
+    const trendChart = ref(null)
+    const volumeChart = ref(null)
+    const ivChart = ref(null)
+    const oiChart = ref(null)
+    let trendChartInstance = null
+    let volumeChartInstance = null
+    let ivChartInstance = null
+    let oiChartInstance = null
 
-    // 標的股票資訊
-    const underlyingStock = ref({
-      symbol: '2330',
-      name: '台積電',
-      price: 595,
-      change: 2.59,
-      hv: 25.3,
-      tradingDays: 252
-    })
+    // 圖表時間範圍
+    const trendPeriod = ref('30')
+    const ivPeriod = ref('30')
 
-    // 表格標題
-    const callHeaders = ref([
-      { title: '履約價', key: 'strike' },
-      { title: '最新價', key: 'price' },
-      { title: '漲跌幅', key: 'change' },
-      { title: '成交量', key: 'volume' },
-      { title: '未平倉', key: 'openInterest' },
-      { title: 'IV', key: 'iv' },
-      { title: '操作', key: 'actions', sortable: false }
-    ])
+    // 分析數據
+    const sentiment = ref(null)
+    const trendData = ref(null)
+    const volumeData = ref(null)
+    const ivData = ref(null)
+    const oiDistribution = ref(null)
 
-    const putHeaders = ref([...callHeaders.value])
+    // API 基礎 URL
+    const API_BASE_URL = '/api'
 
-    // 模擬選擇權資料
-    const callOptions = ref([
-      { strike: 580, price: 25.5, change: 5.2, volume: 2500, openInterest: 15000, iv: 22.5 },
-      { strike: 590, price: 18.2, change: 3.8, volume: 3200, openInterest: 18500, iv: 24.1 },
-      { strike: 595, price: 15.8, change: 2.9, volume: 4500, openInterest: 22000, iv: 25.3 },
-      { strike: 600, price: 12.5, change: 1.5, volume: 5800, openInterest: 28000, iv: 26.8 },
-      { strike: 610, price: 8.3, change: -1.2, volume: 3100, openInterest: 16500, iv: 28.2 }
-    ])
-
-    const putOptions = ref([
-      { strike: 580, price: 6.2, change: -2.5, volume: 1800, openInterest: 12000, iv: 23.1 },
-      { strike: 590, price: 9.8, change: -1.8, volume: 2500, openInterest: 15500, iv: 24.5 },
-      { strike: 595, price: 12.5, change: -0.8, volume: 3200, openInterest: 19000, iv: 25.3 },
-      { strike: 600, price: 16.2, change: 0.5, volume: 4100, openInterest: 24500, iv: 27.0 },
-      { strike: 610, price: 22.5, change: 2.3, volume: 2900, openInterest: 14000, iv: 29.5 }
-    ])
-
-    // 計算屬性
-    const callOI = computed(() => callOptions.value.reduce((sum, opt) => sum + opt.openInterest, 0))
-    const putOI = computed(() => putOptions.value.reduce((sum, opt) => sum + opt.openInterest, 0))
-    const maxPain = ref(595)
-
-    // 方法
-    const formatNumber = (num) => {
-      return num.toLocaleString('zh-TW')
-    }
-
-    const getStrikeClass = (strike, type) => {
-      const spotPrice = underlyingStock.value.price
-      if (type === 'call') {
-        if (strike < spotPrice) return 'font-weight-bold text-success' // ITM
-        if (strike === spotPrice) return 'font-weight-bold text-primary' // ATM
-        return 'text-grey' // OTM
-      } else {
-        if (strike > spotPrice) return 'font-weight-bold text-error' // ITM
-        if (strike === spotPrice) return 'font-weight-bold text-primary' // ATM
-        return 'text-grey' // OTM
+    // 載入市場情緒
+    const loadSentiment = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/options/txo/sentiment`)
+        if (response.data.success) {
+          sentiment.value = response.data.data
+        }
+      } catch (error) {
+        console.error('載入市場情緒失敗:', error)
       }
     }
 
-    const getIVColor = (iv) => {
-      if (iv < 20) return 'success'
-      if (iv < 30) return 'warning'
-      return 'error'
+    // 載入走勢數據
+    const loadTrend = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/options/txo/trend`, {
+          params: { days: trendPeriod.value }
+        })
+        if (response.data.success) {
+          trendData.value = response.data.data
+          await nextTick()
+          renderTrendChart()
+        }
+      } catch (error) {
+        console.error('載入走勢數據失敗:', error)
+      }
     }
 
-    const searchOptions = () => {
-      console.log('搜尋選擇權:', underlyingSymbol.value)
-      // 呼叫 API 搜尋選擇權
+    // 載入成交量分析
+    const loadVolumeAnalysis = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/options/txo/volume-analysis`)
+        if (response.data.success) {
+          volumeData.value = response.data.data
+          await nextTick()
+          renderVolumeChart()
+        }
+      } catch (error) {
+        console.error('載入成交量分析失敗:', error)
+      }
     }
 
-    const calculateBS = (option, type) => {
-      router.push({
-        name: 'BlackScholes',
-        query: {
-          symbol: underlyingSymbol.value,
-          strike: option.strike,
-          type: type
+    // 載入 IV 分析
+    const loadIvAnalysis = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/options/txo/iv-analysis`, {
+          params: { days: ivPeriod.value }
+        })
+        if (response.data.success) {
+          ivData.value = response.data.data
+          await nextTick()
+          renderIvChart()
+        }
+      } catch (error) {
+        console.error('載入 IV 分析失敗:', error)
+      }
+    }
+
+    // 載入 OI 分佈
+    const loadOiDistribution = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/options/txo/oi-distribution`)
+        if (response.data.success) {
+          oiDistribution.value = response.data.data
+          await nextTick()
+          renderOiChart()
+        }
+      } catch (error) {
+        console.error('載入 OI 分佈失敗:', error)
+      }
+    }
+
+    // 渲染走勢圖
+    const renderTrendChart = () => {
+      if (!trendChart.value || !trendData.value) return
+
+      const ctx = trendChart.value.getContext('2d')
+
+      if (trendChartInstance) {
+        trendChartInstance.destroy()
+      }
+
+      trendChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: trendData.value.map(d => d.date),
+          datasets: [{
+            label: 'TXO 平均收盤價',
+            data: trendData.value.map(d => d.close),
+            borderColor: 'rgb(75, 192, 192)',
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            tension: 0.1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: false
+            }
+          }
         }
       })
     }
 
-    const viewGreeks = (option, type) => {
-      console.log('查看 Greeks:', option, type)
+    // 渲染成交量圖
+    const renderVolumeChart = () => {
+      if (!volumeChart.value || !volumeData.value) return
+
+      const ctx = volumeChart.value.getContext('2d')
+
+      if (volumeChartInstance) {
+        volumeChartInstance.destroy()
+      }
+
+      volumeChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Call', 'Put'],
+          datasets: [{
+            label: '成交量',
+            data: [volumeData.value.call.volume, volumeData.value.put.volume],
+            backgroundColor: [
+              'rgba(75, 192, 192, 0.6)',
+              'rgba(255, 99, 132, 0.6)'
+            ],
+            borderColor: [
+              'rgb(75, 192, 192)',
+              'rgb(255, 99, 132)'
+            ],
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true
+            }
+          }
+        }
+      })
     }
 
-    const compareOptions = () => {
-      console.log('比較選擇權')
+    // 渲染 IV 趨勢圖
+    const renderIvChart = () => {
+      if (!ivChart.value || !ivData.value) return
+
+      const ctx = ivChart.value.getContext('2d')
+
+      if (ivChartInstance) {
+        ivChartInstance.destroy()
+      }
+
+      ivChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ivData.value.map(d => d.date),
+          datasets: [
+            {
+              label: 'Call IV',
+              data: ivData.value.map(d => d.call_iv),
+              borderColor: 'rgb(75, 192, 192)',
+              backgroundColor: 'rgba(75, 192, 192, 0.2)',
+              tension: 0.1
+            },
+            {
+              label: 'Put IV',
+              data: ivData.value.map(d => d.put_iv),
+              borderColor: 'rgb(255, 99, 132)',
+              backgroundColor: 'rgba(255, 99, 132, 0.2)',
+              tension: 0.1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: false
+            }
+          }
+        }
+      })
     }
 
-    const refreshData = () => {
-      console.log('更新選擇權資料')
+    // 渲染 OI 分佈圖
+    const renderOiChart = () => {
+      if (!oiChart.value || !oiDistribution.value) return
+
+      const ctx = oiChart.value.getContext('2d')
+
+      if (oiChartInstance) {
+        oiChartInstance.destroy()
+      }
+
+      oiChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: oiDistribution.value.map(d => d.strike_price),
+          datasets: [
+            {
+              label: 'Call OI',
+              data: oiDistribution.value.map(d => d.call_oi),
+              backgroundColor: 'rgba(75, 192, 192, 0.6)',
+              borderColor: 'rgb(75, 192, 192)',
+              borderWidth: 1
+            },
+            {
+              label: 'Put OI',
+              data: oiDistribution.value.map(d => -d.put_oi),
+              backgroundColor: 'rgba(255, 99, 132, 0.6)',
+              borderColor: 'rgb(255, 99, 132)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top'
+            }
+          },
+          scales: {
+            y: {
+              ticks: {
+                callback: function(value) {
+                  return Math.abs(value).toLocaleString()
+                }
+              }
+            }
+          }
+        }
+      })
     }
+
+    // 更新所有數據
+    const refreshAllData = async () => {
+      loading.value = true
+      try {
+        await Promise.all([
+          loadSentiment(),
+          loadTrend(),
+          loadVolumeAnalysis(),
+          loadIvAnalysis(),
+          loadOiDistribution()
+        ])
+      } finally {
+        loading.value = false
+      }
+    }
+
+    // 工具函數
+    const formatNumber = (num) => {
+      return num ? num.toLocaleString('zh-TW') : '0'
+    }
+
+    // 生命週期
+    onMounted(() => {
+      refreshAllData()
+    })
 
     return {
-      underlyingSymbol,
-      selectedExpiry,
-      optionType,
-      moneyness,
-      expiryDates,
-      underlyingStock,
-      callHeaders,
-      putHeaders,
-      callOptions,
-      putOptions,
-      callOI,
-      putOI,
-      maxPain,
+      loading,
+      trendChart,
+      volumeChart,
+      ivChart,
+      oiChart,
+      trendPeriod,
+      ivPeriod,
+      sentiment,
       formatNumber,
-      getStrikeClass,
-      getIVColor,
-      searchOptions,
-      calculateBS,
-      viewGreeks,
-      compareOptions,
-      refreshData
+      refreshAllData,
+      loadTrend,
+      loadIvAnalysis
     }
   }
 }
@@ -354,7 +498,7 @@ export default {
   padding: 16px;
 }
 
-.option-chain-container {
-  width: 100%;
+canvas {
+  max-height: 300px;
 }
 </style>
