@@ -43,7 +43,7 @@
 1. **克隆專案**
 ```bash
 git clone [your-repo-url]
-cd options-trading-system
+cd stock_analysis
 ```
 
 2. **執行初始化腳本**
