@@ -17,12 +17,18 @@ use Carbon\Carbon;
 /**
  * 儀表板 API 控制器
  *
+ * 專門顯示 2330、2317、2454 三支股票
  * 提供儀表板所需的綜合資料
  */
 class DashboardController extends Controller
 {
     /**
-     * 取得熱門股票走勢
+     * 固定顯示的股票代碼
+     */
+    private const TARGET_STOCKS = ['2330', '2317', '2454'];
+
+    /**
+     * 取得股票走勢 (固定顯示 2330、2317、2454)
      *
      * GET /api/dashboard/stock-trends
      *
@@ -32,35 +38,31 @@ class DashboardController extends Controller
     public function stockTrends(Request $request): JsonResponse
     {
         try {
-            $limit = $request->input('limit', 5); // 預設顯示5檔股票
-            $days = $request->input('days', 30);   // 預設30天
+            $days = $request->input('days', 30); // 預設30天 (一個月)
 
             // 計算日期範圍
             $endDate = now();
             $startDate = now()->subDays($days);
 
-            // 取得交易量最大的前N檔股票
-            $topStockIds = StockPrice::select('stock_id')
-                ->whereBetween('trade_date', [$startDate, $endDate])
-                ->groupBy('stock_id')
-                ->orderByRaw('SUM(volume) DESC')
-                ->limit($limit)
-                ->pluck('stock_id');
-
-            // 如果沒有找到股票,使用預設股票
-            if ($topStockIds->isEmpty()) {
-                $topStockIds = Stock::where('is_active', true)
-                    ->limit($limit)
-                    ->pluck('id');
-            }
-
-            // 取得股票資訊和價格資料
-            $stocks = Stock::whereIn('id', $topStockIds)
+            // 取得固定的三支股票
+            $stocks = Stock::whereIn('symbol', self::TARGET_STOCKS)
                 ->with(['prices' => function ($query) use ($startDate, $endDate) {
                     $query->whereBetween('trade_date', [$startDate, $endDate])
                         ->orderBy('trade_date', 'asc');
                 }])
                 ->get();
+
+            // 確保有找到股票
+            if ($stocks->isEmpty()) {
+                Log::warning('找不到指定的股票', [
+                    'symbols' => self::TARGET_STOCKS
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => '找不到指定的股票 (2330, 2317, 2454),請先執行爬蟲'
+                ], 404);
+            }
 
             // 整理資料
             $result = [
@@ -68,8 +70,9 @@ class DashboardController extends Controller
                 'dates' => []
             ];
 
-            // 取得所有交易日期
-            $allDates = StockPrice::whereBetween('trade_date', [$startDate, $endDate])
+            // 取得所有交易日期 (用於 X 軸)
+            $allDates = StockPrice::whereIn('stock_id', $stocks->pluck('id'))
+                ->whereBetween('trade_date', [$startDate, $endDate])
                 ->distinct()
                 ->orderBy('trade_date', 'asc')
                 ->pluck('trade_date')
@@ -84,14 +87,14 @@ class DashboardController extends Controller
             foreach ($stocks as $stock) {
                 $prices = $stock->prices;
 
-                // 計算漲跌幅 (與前一天比較)
+                // 計算漲跌幅 (與第一天比較)
                 $changePercent = 0;
                 if ($prices->count() >= 2) {
+                    $firstPrice = $prices->first()->close;
                     $latestPrice = $prices->last()->close;
-                    $previousPrice = $prices->get($prices->count() - 2)->close;
 
-                    if ($previousPrice > 0) {
-                        $changePercent = (($latestPrice - $previousPrice) / $previousPrice) * 100;
+                    if ($firstPrice > 0) {
+                        $changePercent = (($latestPrice - $firstPrice) / $firstPrice) * 100;
                     }
                 }
 
@@ -99,9 +102,16 @@ class DashboardController extends Controller
                     'symbol' => $stock->symbol,
                     'name' => $stock->name,
                     'change_percent' => round($changePercent, 2),
+                    'latest_price' => $prices->count() > 0 ? $prices->last()->close : 0,
                     'prices' => $prices->pluck('close')->toArray()
                 ];
             }
+
+            Log::info('成功取得股票走勢', [
+                'stocks' => $stocks->pluck('symbol'),
+                'date_range' => [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')],
+                'data_points' => count($result['dates'])
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -121,7 +131,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * 取得波動率概覽
+     * 取得波動率概覽 (固定顯示 2330、2317、2454)
      *
      * GET /api/dashboard/volatility-overview
      *
@@ -131,26 +141,30 @@ class DashboardController extends Controller
     public function volatilityOverview(Request $request): JsonResponse
     {
         try {
-            $limit = $request->input('limit', 5); // 預設顯示5檔股票
+            // 取得固定的三支股票
+            $stocks = Stock::whereIn('symbol', self::TARGET_STOCKS)->get();
 
-            // 取得前N檔有最新價格的股票
-            $stockIds = Stock::whereHas('prices')
-                ->with('latestPrice')
-                ->limit($limit)
-                ->pluck('id');
+            if ($stocks->isEmpty()) {
+                Log::warning('找不到指定的股票進行波動率計算', [
+                    'symbols' => self::TARGET_STOCKS
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => '找不到指定的股票'
+                ], 404);
+            }
 
             $volatilities = [];
             $hvSum = 0;
             $ivSum = 0;
             $count = 0;
 
-            foreach ($stockIds as $stockId) {
-                $stock = Stock::find($stockId);
+            foreach ($stocks as $stock) {
+                // 計算歷史波動率 (HV) - 使用 30 天期間
+                $hv = $this->calculateHistoricalVolatility($stock->id, 30);
 
-                // 計算歷史波動率 (HV)
-                $hv = $this->calculateHistoricalVolatility($stockId, 30);
-
-                // 計算隱含波動率 (IV) - 從選擇權價格推算
+                // 計算隱含波動率 (IV)
                 $iv = $this->calculateImpliedVolatility($stock->symbol);
 
                 $volatilities[] = [
@@ -168,6 +182,12 @@ class DashboardController extends Controller
             // 計算平均值
             $avgHV = $count > 0 ? $hvSum / $count : 0;
             $avgIV = $count > 0 ? $ivSum / $count : 0;
+
+            Log::info('成功計算波動率', [
+                'stocks' => $stocks->pluck('symbol'),
+                'avg_hv' => $avgHV,
+                'avg_iv' => $avgIV
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -195,22 +215,26 @@ class DashboardController extends Controller
      *
      * 使用對數報酬率的標準差計算
      *
-     * @param int $stockId
+     * @param int $stockId 股票ID
      * @param int $days 計算期間天數
      * @return float
      */
     private function calculateHistoricalVolatility(int $stockId, int $days = 30): float
     {
         try {
-            // 取得最近N天的收盤價
+            // 取得最近N天的收盤價 (需要多一天來計算報酬率)
             $prices = StockPrice::where('stock_id', $stockId)
                 ->orderBy('trade_date', 'desc')
-                ->limit($days + 1) // 需要多一天來計算報酬率
+                ->limit($days + 1)
                 ->pluck('close')
                 ->reverse()
                 ->values();
 
             if ($prices->count() < 2) {
+                Log::warning('資料不足以計算歷史波動率', [
+                    'stock_id' => $stockId,
+                    'data_count' => $prices->count()
+                ]);
                 return 0;
             }
 
@@ -256,7 +280,7 @@ class DashboardController extends Controller
      * 從選擇權價格反推波動率
      * 簡化版本:使用已計算的 IV 或估算值
      *
-     * @param string $symbol
+     * @param string $symbol 股票代碼
      * @return float
      */
     private function calculateImpliedVolatility(string $symbol): float
@@ -290,12 +314,13 @@ class DashboardController extends Controller
             }
 
             // 方法3: 使用 HV 的 1.2 倍作為估算 (IV 通常略高於 HV)
-            $hv = $this->calculateHistoricalVolatility(
-                Stock::where('symbol', $symbol)->value('id'),
-                30
-            );
+            $stockId = Stock::where('symbol', $symbol)->value('id');
+            if ($stockId) {
+                $hv = $this->calculateHistoricalVolatility($stockId, 30);
+                return $hv * 1.2;
+            }
 
-            return $hv * 1.2;
+            return 0;
         } catch (\Exception $e) {
             Log::error('計算隱含波動率失敗', [
                 'symbol' => $symbol,
@@ -320,6 +345,7 @@ class DashboardController extends Controller
                 'total_options' => Option::where('is_active', true)->count(),
                 'latest_update' => StockPrice::max('updated_at'),
                 'data_coverage_days' => StockPrice::distinct('trade_date')->count(),
+                'target_stocks' => self::TARGET_STOCKS
             ];
 
             return response()->json([
