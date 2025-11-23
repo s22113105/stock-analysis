@@ -12,7 +12,8 @@ use Illuminate\Support\Facades\Route;
 // 導入所有需要的控制器
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\StockController;
-use App\Http\Controllers\OptionController; // 確保只用這個
+use App\Http\Controllers\OptionController;
+use App\Http\Controllers\Api\OptionChainController; // [新功能] 選擇權 T 字報價表控制器
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\VolatilityController;
@@ -69,24 +70,17 @@ Route::prefix('options')->group(function () {
     Route::get('/{id}', [OptionController::class, 'show']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
-    // 🌟 TXO 分析功能 (修正後：指向 OptionController)
+    // 🌟 [新功能] 智慧選擇權鏈 T 字報價表 (純報價版)
+    // 用於前端 Options.vue 的主畫面
+    Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
+
+    // TXO 分析功能 (舊有路由，保留做為備用或圖表數據源)
     Route::prefix('txo')->group(function () {
-        // TXO 收盤價走勢圖
         Route::get('/trend', [OptionController::class, 'txoTrend']);
-
-        // 成交量分析 (Call vs Put)
         Route::get('/volume-analysis', [OptionController::class, 'txoVolumeAnalysis']);
-
-        // 未平倉量分析 (OI Analysis)
         Route::get('/oi-analysis', [OptionController::class, 'txoOiAnalysis']);
-
-        // 隱含波動率分析 (IV Analysis)
         Route::get('/iv-analysis', [OptionController::class, 'txoIvAnalysis']);
-
-        // 市場情緒總覽
         Route::get('/sentiment', [OptionController::class, 'txoSentiment']);
-
-        // OI 分佈 (依履約價)
         Route::get('/oi-distribution', [OptionController::class, 'txoOiDistribution']);
     });
 });
@@ -164,7 +158,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
 });
 
-// 在 routes/api.php 最下方加入
+// ==========================================
+// Debug 路由 (診斷用)
+// ==========================================
 Route::get('/debug/data-check', function () {
     $prices = \App\Models\OptionPrice::count();
     $options = \App\Models\Option::count();
