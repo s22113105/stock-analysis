@@ -21,24 +21,23 @@ export default defineConfig({
                 },
             },
         }),
-        // ✅ Vuetify 插件設定
-        // styles: { configFile: 'resources/sass/variables.scss' } // 如果您有自定義變數可開啟
-        vuetify({ 
+        // ✅ Vuetify 插件設定 (保留您的設定)
+        vuetify({
             autoImport: true,
             styles: {
-                configFile: 'resources/css/settings.scss', // 或者是您的自定義樣式路徑，如果沒有可移除此行
+                configFile: 'resources/css/settings.scss',
             }
         }),
     ],
     resolve: {
         alias: {
-            // ✅ 使用 path.resolve 確保路徑正確
-            '@': path.resolve(__dirname, 'resources/js'), 
-            '~': path.resolve(__dirname, 'node_modules'), // 有助於 SCSS 引用 node_modules
+            // ✅ 保留您正確的路徑設定
+            '@': path.resolve(__dirname, 'resources/js'),
+            '~': path.resolve(__dirname, 'node_modules'),
             'vue': 'vue/dist/vue.esm-bundler.js',
         },
     },
-    // ✅ Docker 環境設定 (保持您原本正確的設定)
+    // ✅ Docker 環境設定
     server: {
         host: '0.0.0.0',
         port: 5173,
@@ -46,7 +45,29 @@ export default defineConfig({
             host: 'localhost',
         },
         watch: {
-            usePolling: true, // 解決 Windows Docker 文件同步延遲
+            usePolling: true, // 保留這行，對 Windows Docker 很重要
         },
+        // 👇👇👇 這裡就是讓前端能拿到資料的關鍵！ 👇👇👇
+        proxy: {
+            '/api': {
+                target: 'http://stock-analysis-app:8000', // 指向後端容器
+                changeOrigin: true,
+                secure: false,
+                // 確保路徑正確傳遞
+                rewrite: (path) => path.replace(/^\/api/, '/api'),
+                configure: (proxy, _options) => {
+                    proxy.on('error', (err, _req, _res) => {
+                        console.log('Proxy error:', err);
+                    });
+                    proxy.on('proxyReq', (proxyReq, req, _res) => {
+                        console.log('Sending Request:', req.method, req.url);
+                    });
+                    proxy.on('proxyRes', (proxyRes, req, _res) => {
+                        console.log('Received Response:', proxyRes.statusCode, req.url);
+                    });
+                },
+            },
+        },
+        // 👆👆👆 結束 👆👆👆
     },
 });

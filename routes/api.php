@@ -12,8 +12,7 @@ use Illuminate\Support\Facades\Route;
 // 導入所有需要的控制器
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\StockController;
-use App\Http\Controllers\OptionController;
-use App\Http\Controllers\OptionAnalysisController;  // 新增
+use App\Http\Controllers\OptionController; // 確保只用這個
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\VolatilityController;
@@ -70,25 +69,25 @@ Route::prefix('options')->group(function () {
     Route::get('/{id}', [OptionController::class, 'show']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
-    // 🌟 TXO 分析功能 (新增)
+    // 🌟 TXO 分析功能 (修正後：指向 OptionController)
     Route::prefix('txo')->group(function () {
         // TXO 收盤價走勢圖
-        Route::get('/trend', [OptionAnalysisController::class, 'getTxoTrend']);
+        Route::get('/trend', [OptionController::class, 'txoTrend']);
 
         // 成交量分析 (Call vs Put)
-        Route::get('/volume-analysis', [OptionAnalysisController::class, 'getVolumeAnalysis']);
+        Route::get('/volume-analysis', [OptionController::class, 'txoVolumeAnalysis']);
 
         // 未平倉量分析 (OI Analysis)
-        Route::get('/oi-analysis', [OptionAnalysisController::class, 'getOiAnalysis']);
+        Route::get('/oi-analysis', [OptionController::class, 'txoOiAnalysis']);
 
         // 隱含波動率分析 (IV Analysis)
-        Route::get('/iv-analysis', [OptionAnalysisController::class, 'getIvAnalysis']);
+        Route::get('/iv-analysis', [OptionController::class, 'txoIvAnalysis']);
 
         // 市場情緒總覽
-        Route::get('/sentiment', [OptionAnalysisController::class, 'getSentiment']);
+        Route::get('/sentiment', [OptionController::class, 'txoSentiment']);
 
         // OI 分佈 (依履約價)
-        Route::get('/oi-distribution', [OptionAnalysisController::class, 'getOiDistribution']);
+        Route::get('/oi-distribution', [OptionController::class, 'txoOiDistribution']);
     });
 });
 
@@ -163,4 +162,23 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // 登出
     Route::post('/auth/logout', [AuthController::class, 'logout']);
+});
+
+// 在 routes/api.php 最下方加入
+Route::get('/debug/data-check', function () {
+    $prices = \App\Models\OptionPrice::count();
+    $options = \App\Models\Option::count();
+    // 檢查有多少價格是對應不到合約的
+    $orphaned = \App\Models\OptionPrice::doesntHave('option')->count();
+
+    $latest = \App\Models\OptionPrice::max('trade_date');
+
+    return [
+        'status' => ($orphaned > 0) ? 'DATA_CORRUPTED' : 'DATA_OK',
+        'total_prices' => $prices,
+        'total_options' => $options,
+        'orphaned_prices_count' => $orphaned . ' (這些價格找不到對應的合約)',
+        'latest_trade_date' => $latest,
+        'message' => ($orphaned > 0) ? '資料庫關聯已斷裂，必須重置資料庫！' : '資料庫結構正常'
+    ];
 });
