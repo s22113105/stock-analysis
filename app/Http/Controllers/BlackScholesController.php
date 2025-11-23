@@ -320,7 +320,8 @@ class BlackScholesController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'underlying' => 'required|string',
-            'expiry_date' => 'required|date',
+            'expiry_date' => 'nullable|date',
+            'contract_month' => 'nullable|string', // 新增：合約月份代碼 (例如: 202511W2)
             'trade_date' => 'nullable|date',
             'option_type' => 'required|in:call,put,both',
         ]);
@@ -336,17 +337,32 @@ class BlackScholesController extends Controller
         try {
             $underlying = $request->input('underlying');
             $expiryDate = $request->input('expiry_date');
+            $contractMonth = $request->input('contract_month'); // 例如 202511 或 202511W2
             $tradeDate = $request->input('trade_date', now()->format('Y-m-d'));
             $optionType = $request->input('option_type');
 
             // 查詢選擇權資料
             $query = Option::where('underlying', $underlying)
-                ->where('expiry_date', $expiryDate)
-                ->where('is_active', true)
-                ->with(['prices' => function ($q) use ($tradeDate) {
-                    $q->where('trade_date', $tradeDate);
-                }]);
+                ->where('is_active', true);
 
+            // 如果有指定到期日，使用到期日過濾
+            if ($expiryDate) {
+                $query->where('expiry_date', $expiryDate);
+            }
+
+            // ⚠️ 重要更新：如果是真實資料模式，建議使用 Contract Month 過濾
+            // 因為 option_code 格式為 TXO_202511W2_C_20000
+            if ($contractMonth) {
+                $query->where('option_code', 'like', "%_{$contractMonth}_%");
+            }
+
+            // 關聯查詢價格
+            $query->with(['prices' => function ($q) use ($tradeDate) {
+                $q->where('trade_date', $tradeDate)
+                  ->whereNotNull('implied_volatility'); // 必須要有 IV 才能畫微笑曲線
+            }]);
+
+            // 選擇權類型過濾
             if ($optionType !== 'both') {
                 $query->where('option_type', $optionType);
             }
@@ -356,7 +372,12 @@ class BlackScholesController extends Controller
             if ($options->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => '找不到符合條件的選擇權資料'
+                    'message' => '找不到符合條件的選擇權資料，請確認該月份/日期是否有資料',
+                    'debug' => [
+                        'underlying' => $underlying,
+                        'date' => $tradeDate,
+                        'contract_month' => $contractMonth
+                    ]
                 ], 404);
             }
 
@@ -372,9 +393,9 @@ class BlackScholesController extends Controller
                 $smileData[] = [
                     'option_code' => $option->option_code,
                     'option_type' => $option->option_type,
-                    'strike_price' => $option->strike_price,
-                    'implied_volatility' => $price->implied_volatility,
-                    'market_price' => $price->close,
+                    'strike_price' => floatval($option->strike_price),
+                    'implied_volatility' => floatval($price->implied_volatility),
+                    'market_price' => floatval($price->close),
                     'volume' => $price->volume,
                     'open_interest' => $price->open_interest,
                 ];
@@ -385,6 +406,7 @@ class BlackScholesController extends Controller
                 'data' => [
                     'smile_data' => $smileData,
                     'underlying' => $underlying,
+                    'contract_month' => $contractMonth,
                     'expiry_date' => $expiryDate,
                     'trade_date' => $tradeDate,
                     'data_points' => count($smileData),
