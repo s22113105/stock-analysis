@@ -6,14 +6,14 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 /**
- * 選擇權鏈服務 (SQL JOIN 版)
- * 直接使用 SQL 查詢，繞過模型關聯可能的問題
+ * 選擇權鏈服務 (SQL 原生查詢版)
+ * 直接對資料庫下指令，確保資料絕對能顯示
  */
 class OptionChainService
 {
     public function getOptionChain(?string $expiryDate = null): array
     {
-        // 1. 取得所有可用的到期日
+        // 1. 取得所有有資料的到期日 (不限未來，歷史資料也要能看)
         $availableExpiries = DB::table('options')
             ->where('underlying', 'TXO')
             ->where('is_active', true)
@@ -23,24 +23,23 @@ class OptionChainService
             ->pluck('expiry_date');
 
         if ($availableExpiries->isEmpty()) {
-            return ['error' => '資料庫中找不到任何 TXO 合約 (options 表為空)'];
+            return ['error' => '資料庫 options 表中找不到 TXO 合約'];
         }
 
-        // 2. 決定到期日
+        // 2. 決定到期日 (預設選列表中的第一個)
         if (!$expiryDate || !$availableExpiries->contains($expiryDate)) {
             $expiryDate = $availableExpiries->first();
         }
 
-        // 3. 找出全市場最新的交易日期
+        // 3. 找出全市場最新的交易日期 (確保一定有價格)
         $latestTradeDate = DB::table('option_prices')->max('trade_date');
 
         if (!$latestTradeDate) {
-            // 如果價格表全空
-            return ['error' => '資料庫中沒有任何價格資料 (option_prices 表為空)'];
+            return ['error' => '資料庫 option_prices 表是空的，請先匯入資料'];
         }
 
         // 4. 使用 SQL JOIN 直接查詢 (最穩定的方式)
-        // 邏輯：拿出該到期日的所有合約，並嘗試對應最新日期的價格
+        // 邏輯：拿出該到期日的所有合約，並 Left Join 最新日期的價格
         $rows = DB::table('options as o')
             ->leftJoin('option_prices as p', function ($join) use ($latestTradeDate) {
                 $join->on('o.id', '=', 'p.option_id')
@@ -64,7 +63,7 @@ class OptionChainService
             ->get();
 
         if ($rows->isEmpty()) {
-            return ['error' => "找不到 {$expiryDate} 到期的合約資料"];
+            return ['error' => "找不到到期日為 {$expiryDate} 的合約資料"];
         }
 
         // 5. 組裝 T 字結構
@@ -78,21 +77,21 @@ class OptionChainService
 
             // 價格顯示邏輯：優先 Close > Settlement > 0
             $displayPrice = 0;
-            if ($row->close > 0) {
-                $displayPrice = $row->close;
-            } elseif ($row->settlement > 0) {
-                $displayPrice = $row->settlement;
+            if (isset($row->close) && $row->close > 0) {
+                $displayPrice = (float)$row->close;
+            } elseif (isset($row->settlement) && $row->settlement > 0) {
+                $displayPrice = (float)$row->settlement;
             }
 
             $data = [
                 'id' => $row->id,
                 'code' => $row->option_code,
-                'price' => $row->close,
+                'price' => $displayPrice, // 統一用這個欄位顯示
                 'display_price' => $displayPrice,
-                'volume' => (int)$row->volume,
-                'oi' => (int)$row->oi,
-                'iv' => (float)$row->iv,
-                'delta' => (float)$row->delta,
+                'volume' => (int)($row->volume ?? 0),
+                'oi' => (int)($row->oi ?? 0),
+                'iv' => (float)($row->iv ?? 0),
+                'delta' => (float)($row->delta ?? 0),
             ];
 
             if (!isset($chain[$strike])) {
@@ -100,10 +99,10 @@ class OptionChainService
             }
             $chain[$strike][$type] = $data;
 
-            // 計算 ATM
+            // 計算 ATM (只用有價格的來算)
             if (isset($chain[$strike]['call']) && isset($chain[$strike]['put'])) {
-                $callP = $chain[$strike]['call']['display_price'];
-                $putP = $chain[$strike]['put']['display_price'];
+                $callP = $chain[$strike]['call']['price'];
+                $putP = $chain[$strike]['put']['price'];
 
                 if ($callP > 0 && $putP > 0) {
                     $diff = abs($callP - $putP);
@@ -131,7 +130,7 @@ class OptionChainService
 
         return [
             'expiry_date' => $expiryDate,
-            'trade_date' => $latestTradeDate, // 直接使用資料庫抓到的日期字串
+            'trade_date' => $latestTradeDate,
             'available_expiries' => $availableExpiries,
             'atm_strike' => $atmStrike,
             'chain' => array_values($chain),
