@@ -62,19 +62,30 @@ Route::prefix('stocks')->group(function () {
 });
 
 // ==========================================
-// Option API (選擇權)
+// Option API (選擇權) - 更新版本
 // ==========================================
 Route::prefix('options')->group(function () {
-    // 基本 CRUD
+    // 基本 CRUD (保留原有的)
     Route::get('/', [OptionController::class, 'index']);
     Route::get('/{id}', [OptionController::class, 'show']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
-    // 🌟 [新功能] 智慧選擇權鏈 T 字報價表 (純報價版)
-    // 用於前端 Options.vue 的主畫面
-    Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
+    // 選擇權鏈 T 字報價表路由群組
+    Route::prefix('chain-table')->group(function () {
+        // 主要端點 - 取得 T 字報價表
+        Route::get('/', [OptionChainController::class, 'getChainTable']);
 
-    // TXO 分析功能 (舊有路由，保留做為備用或圖表數據源)
+        // 測試端點 - 檢查資料庫連線
+        Route::get('/test', [OptionChainController::class, 'testConnection']);
+
+        // 市場狀態端點
+        Route::get('/market-status', [OptionChainController::class, 'getMarketStatus']);
+
+        // 清除快取端點
+        Route::post('/clear-cache', [OptionChainController::class, 'clearCache']);
+    });
+
+    // TXO 分析功能 (保留原有的)
     Route::prefix('txo')->group(function () {
         Route::get('/trend', [OptionController::class, 'txoTrend']);
         Route::get('/volume-analysis', [OptionController::class, 'txoVolumeAnalysis']);
