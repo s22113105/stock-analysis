@@ -31,7 +31,7 @@
         <div class="mr-4 text-caption text-grey">
           資料日期: <span class="text-high-emphasis font-weight-bold">{{ tradeDate }}</span>
           <br>
-          預估大盤位置: <span class="text-primary font-weight-bold">{{ atmStrike }}</span>
+          預估大盤: <span class="text-primary font-weight-bold">{{ atmStrike > 0 ? atmStrike : '-' }}</span>
         </div>
         <v-btn
           color="primary"
@@ -44,6 +44,11 @@
         </v-btn>
       </v-col>
     </v-row>
+
+    <!-- 錯誤提示 -->
+    <v-alert v-if="errorMsg" type="warning" variant="tonal" class="mb-4" closable>
+      {{ errorMsg }}
+    </v-alert>
 
     <!-- 2. T 字報價表 -->
     <v-card elevation="3" rounded="lg" class="overflow-hidden chain-card">
@@ -61,7 +66,7 @@
       </div>
 
       <!-- 表格本體 -->
-      <v-table density="compact" hover fixed-header height="calc(100vh - 220px)" class="chain-table">
+      <v-table density="compact" hover fixed-header height="calc(100vh - 250px)" class="chain-table">
         <thead>
           <tr class="sub-header bg-grey-lighten-4">
             <!-- Call Columns -->
@@ -103,7 +108,7 @@
               </td>
               <td class="text-right font-weight-bold text-body-2 text-red-darken-1 border-right"
                   :class="{'bg-red-lighten-4': row.call?.is_itm, 'bg-red-lighten-5': !row.call?.is_itm}">
-                {{ formatPrice(row.call?.display_price || row.call?.price) }}
+                {{ formatPrice(row.call?.price) }}
               </td>
 
               <!-- === STRIKE (履約價) === -->
@@ -115,7 +120,7 @@
               <!-- === PUT SIDE === -->
               <td class="text-left font-weight-bold text-body-2 text-green-darken-1 border-left"
                   :class="{'bg-green-lighten-4': row.put?.is_itm, 'bg-green-lighten-5': !row.put?.is_itm}">
-                {{ formatPrice(row.put?.display_price || row.put?.price) }}
+                {{ formatPrice(row.put?.price) }}
               </td>
               <td class="text-left" :class="{'bg-green-lighten-5': row.put?.is_itm}">
                 {{ formatInt(row.put?.volume) }}
@@ -136,7 +141,7 @@
           <tr v-if="!loading && chainData.length === 0">
             <td colspan="11" class="text-center py-10 text-grey">
               <v-icon size="64" color="grey-lighten-2" class="mb-2">mdi-database-off</v-icon>
-              <p>目前無選擇權報價資料</p>
+              <p>目前無選擇權報價資料，請嘗試切換到期日</p>
             </td>
           </tr>
         </tbody>
@@ -163,10 +168,12 @@ export default {
     const selectedExpiry = ref(null)
     const tradeDate = ref('-')
     const atmStrike = ref(0)
+    const errorMsg = ref('')
 
     // API 載入函數
     const loadChainData = async () => {
       loading.value = true
+      errorMsg.value = ''
       try {
         const params = {}
         if (selectedExpiry.value) {
@@ -183,13 +190,19 @@ export default {
           tradeDate.value = data.trade_date
           atmStrike.value = data.atm_strike
 
-          // 如果當前沒選日期，自動選第一個 (最近的)
+          // 如果當前沒選日期，自動選第一個
           if (!selectedExpiry.value && availableExpiries.value.length > 0) {
-            selectedExpiry.value = data.expiry_date
+             // 檢查 API 回傳的 expiry_date 是否在列表中
+            if (data.expiry_date && availableExpiries.value.includes(data.expiry_date)) {
+                 selectedExpiry.value = data.expiry_date
+            } else {
+                 selectedExpiry.value = availableExpiries.value[0]
+            }
           }
         }
       } catch (e) {
         console.error('載入選擇權鏈失敗:', e)
+        errorMsg.value = e.response?.data?.message || '無法取得資料，請稍後再試'
       } finally {
         loading.value = false
       }
@@ -198,7 +211,7 @@ export default {
     // 格式化工具
     const formatPrice = (val) => {
       if (val === null || val === undefined || val === '') return '-'
-      // 如果有小數點且為 0，顯示 '-'
+      // 如果是 0，顯示 '-'
       if (parseFloat(val) === 0) return '-'
       return Number(val).toLocaleString()
     }
@@ -216,6 +229,7 @@ export default {
       selectedExpiry,
       tradeDate,
       atmStrike,
+      errorMsg,
       loadChainData,
       formatPrice,
       formatInt,
@@ -269,3 +283,11 @@ export default {
   transition: filter 0.1s;
 }
 </style>
+```
+
+### 執行步驟
+
+1.  **覆蓋檔案**：請務必**完全覆蓋**以上 3 個檔案。
+2.  **清除快取 (關鍵)**：在終端機執行：
+    ```bash
+    docker-compose exec app php artisan optimize:clear

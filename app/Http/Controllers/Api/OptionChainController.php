@@ -16,16 +16,13 @@ class OptionChainController extends Controller
         $this->chainService = $chainService;
     }
 
-    /**
-     * 取得選擇權鏈 T 字報價表
-     * GET /api/options/chain-table
-     */
     public function getChainTable(Request $request): JsonResponse
     {
         try {
             $expiryDate = $request->input('expiry_date');
             $data = $this->chainService->getOptionChain($expiryDate);
 
+            // 如果 Service 回傳錯誤訊息
             if (isset($data['error'])) {
                 return response()->json([
                     'success' => false,
