@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
 /**
- * 波動率計算服務
+ * 波動率計算服務 (優化版)
  * 
  * 功能：
  * - 計算歷史波動率 (Historical Volatility, HV)
@@ -20,10 +20,14 @@ use Carbon\Carbon;
  * - 計算實現波動率 (Realized Volatility)
  * - 波動率偏斜 (Volatility Skew)
  * - 波動率曲面 (Volatility Surface)
+ * - 多種波動率計算方法支援
  */
 class VolatilityService
 {
     protected $blackScholesService;
+
+    // 每年交易日數
+    const TRADING_DAYS_PER_YEAR = 252;
 
     public function __construct(BlackScholesService $blackScholesService)
     {
@@ -36,15 +40,17 @@ class VolatilityService
      *
      * @param int $stockId 股票 ID
      * @param int $periodDays 計算期間(天數)
-     * @param string $endDate 結束日期
+     * @param string|null $endDate 結束日期
      * @param bool $annualized 是否年化
+     * @param string $method 計算方法
      * @return float|null 歷史波動率
      */
     public function calculateHistoricalVolatility(
         int $stockId,
         int $periodDays = 30,
         ?string $endDate = null,
-        bool $annualized = true
+        bool $annualized = true,
+        string $method = 'close-to-close'
     ): ?float {
         $endDate = $endDate ?: now()->format('Y-m-d');
 
@@ -53,7 +59,7 @@ class VolatilityService
             ->where('trade_date', '<=', $endDate)
             ->orderBy('trade_date', 'desc')
             ->limit($periodDays + 1)
-            ->pluck('close')
+            ->get()
             ->reverse()
             ->values();
 
@@ -66,11 +72,33 @@ class VolatilityService
             return null;
         }
 
-        // 計算對數收益率
+        // 根據方法選擇計算方式
+        $volatility = match ($method) {
+            'parkinson' => $this->calculateParkinsonVolatility($prices),
+            'garman-klass' => $this->calculateGarmanKlassVolatility($prices),
+            'rogers-satchell' => $this->calculateRogersSatchellVolatility($prices),
+            'yang-zhang' => $this->calculateYangZhangVolatility($prices),
+            default => $this->calculateCloseToCloseVolatility($prices),
+        };
+
+        // 年化處理
+        if ($annualized && $volatility !== null) {
+            $volatility = $volatility * sqrt(self::TRADING_DAYS_PER_YEAR);
+        }
+
+        return $volatility !== null ? round($volatility, 6) : null;
+    }
+
+    /**
+     * Close-to-Close 波動率計算
+     * 標準的歷史波動率計算方法
+     */
+    private function calculateCloseToCloseVolatility($prices): ?float
+    {
         $returns = [];
         for ($i = 1; $i < $prices->count(); $i++) {
-            if ($prices[$i-1] > 0) {
-                $returns[] = log($prices[$i] / $prices[$i-1]);
+            if ($prices[$i - 1]->close > 0) {
+                $returns[] = log($prices[$i]->close / $prices[$i - 1]->close);
             }
         }
 
@@ -86,15 +114,151 @@ class VolatilityService
             $variance += pow($return - $mean, 2);
         }
         
-        $variance = $variance / count($returns);
-        $stdDev = sqrt($variance);
+        // 使用 n-1 (樣本標準差)
+        $variance = $variance / (count($returns) - 1);
+        
+        return sqrt($variance);
+    }
 
-        // 年化處理 (假設一年有 252 個交易日)
-        if ($annualized) {
-            $stdDev = $stdDev * sqrt(252);
+    /**
+     * Parkinson 波動率計算
+     * 使用日內高低價，比 Close-to-Close 更有效率
+     */
+    private function calculateParkinsonVolatility($prices): ?float
+    {
+        $sumSquaredLogHL = 0;
+        $validCount = 0;
+
+        foreach ($prices as $price) {
+            if ($price->high > 0 && $price->low > 0 && $price->high >= $price->low) {
+                $logHL = log($price->high / $price->low);
+                $sumSquaredLogHL += pow($logHL, 2);
+                $validCount++;
+            }
         }
 
-        return round($stdDev, 6);
+        if ($validCount < 2) {
+            return null;
+        }
+
+        // Parkinson 常數: 1 / (4 * ln(2))
+        $constant = 1 / (4 * log(2));
+        
+        return sqrt($constant * $sumSquaredLogHL / $validCount);
+    }
+
+    /**
+     * Garman-Klass 波動率計算
+     * 同時考慮開盤、收盤、最高、最低價
+     */
+    private function calculateGarmanKlassVolatility($prices): ?float
+    {
+        $sum = 0;
+        $validCount = 0;
+
+        foreach ($prices as $price) {
+            if ($price->high > 0 && $price->low > 0 && 
+                $price->open > 0 && $price->close > 0 &&
+                $price->high >= $price->low) {
+                
+                $logHL = log($price->high / $price->low);
+                $logCO = log($price->close / $price->open);
+                
+                // Garman-Klass 公式
+                $sum += 0.5 * pow($logHL, 2) - (2 * log(2) - 1) * pow($logCO, 2);
+                $validCount++;
+            }
+        }
+
+        if ($validCount < 2) {
+            return null;
+        }
+
+        return sqrt($sum / $validCount);
+    }
+
+    /**
+     * Rogers-Satchell 波動率計算
+     * 適用於有漂移的市場
+     */
+    private function calculateRogersSatchellVolatility($prices): ?float
+    {
+        $sum = 0;
+        $validCount = 0;
+
+        foreach ($prices as $price) {
+            if ($price->high > 0 && $price->low > 0 && 
+                $price->open > 0 && $price->close > 0) {
+                
+                $logHC = log($price->high / $price->close);
+                $logHO = log($price->high / $price->open);
+                $logLC = log($price->low / $price->close);
+                $logLO = log($price->low / $price->open);
+                
+                $sum += $logHC * $logHO + $logLC * $logLO;
+                $validCount++;
+            }
+        }
+
+        if ($validCount < 2) {
+            return null;
+        }
+
+        return sqrt($sum / $validCount);
+    }
+
+    /**
+     * Yang-Zhang 波動率計算
+     * 結合 overnight 和 open-to-close 波動率
+     */
+    private function calculateYangZhangVolatility($prices): ?float
+    {
+        if ($prices->count() < 3) {
+            return null;
+        }
+
+        $overnightReturns = [];
+        $openCloseReturns = [];
+        $rogersSatchell = [];
+
+        for ($i = 1; $i < $prices->count(); $i++) {
+            $prev = $prices[$i - 1];
+            $curr = $prices[$i];
+
+            if ($prev->close > 0 && $curr->open > 0 && $curr->close > 0 &&
+                $curr->high > 0 && $curr->low > 0) {
+                
+                // Overnight return
+                $overnightReturns[] = log($curr->open / $prev->close);
+                
+                // Open-to-close return
+                $openCloseReturns[] = log($curr->close / $curr->open);
+                
+                // Rogers-Satchell component
+                $logHC = log($curr->high / $curr->close);
+                $logHO = log($curr->high / $curr->open);
+                $logLC = log($curr->low / $curr->close);
+                $logLO = log($curr->low / $curr->open);
+                $rogersSatchell[] = $logHC * $logHO + $logLC * $logLO;
+            }
+        }
+
+        if (count($overnightReturns) < 2) {
+            return null;
+        }
+
+        $n = count($overnightReturns);
+        $k = 0.34 / (1.34 + ($n + 1) / ($n - 1));
+
+        // 計算各組成部分的變異數
+        $overnightVar = $this->calculateVariance($overnightReturns);
+        $openCloseVar = $this->calculateVariance($openCloseReturns);
+        $rsVar = array_sum($rogersSatchell) / $n;
+
+        // Yang-Zhang 公式
+        $variance = $overnightVar + $k * $openCloseVar + (1 - $k) * $rsVar;
+
+        return sqrt(max(0, $variance));
     }
 
     /**
@@ -113,265 +277,101 @@ class VolatilityService
     ): ?float {
         $endDate = $endDate ?: now()->format('Y-m-d');
 
-        // 取得價格資料
         $prices = StockPrice::where('stock_id', $stockId)
             ->where('trade_date', '<=', $endDate)
             ->orderBy('trade_date', 'desc')
             ->limit($periodDays)
-            ->get(['high', 'low', 'close']);
+            ->get();
 
         if ($prices->count() < 2) {
             return null;
         }
 
-        // 使用 Parkinson's volatility estimator
-        // σ = sqrt((1/(4n*ln2)) * Σ(ln(High/Low))^2)
-        $sumSquaredRange = 0;
-        
+        // 使用 Parkinson 估計器
+        $sum = 0;
+        $validCount = 0;
+
         foreach ($prices as $price) {
-            if ($price->high > 0 && $price->low > 0) {
-                $logRange = log($price->high / $price->low);
-                $sumSquaredRange += pow($logRange, 2);
+            if ($price->high > 0 && $price->low > 0 && $price->high >= $price->low) {
+                $logHL = log($price->high / $price->low);
+                $sum += pow($logHL, 2);
+                $validCount++;
             }
         }
 
-        $n = $prices->count();
-        $variance = $sumSquaredRange / (4 * $n * log(2));
-        $volatility = sqrt($variance) * sqrt(252); // 年化
+        if ($validCount < 2) {
+            return null;
+        }
 
-        return round($volatility, 6);
+        // Parkinson 常數: 1 / (4 * ln(2))
+        $constant = 1 / (4 * log(2));
+        $dailyVol = sqrt($constant * $sum / $validCount);
+        
+        // 年化
+        return round($dailyVol * sqrt(self::TRADING_DAYS_PER_YEAR), 6);
     }
 
     /**
-     * 計算選擇權的隱含波動率
+     * 計算 EWMA (指數加權移動平均) 波動率
      *
-     * @param int $optionId 選擇權 ID
-     * @param string|null $date 日期
-     * @param float $riskFreeRate 無風險利率
+     * @param int $stockId 股票 ID
+     * @param int $periodDays 計算期間
+     * @param float $lambda 衰減因子 (通常 0.94)
+     * @param string|null $endDate 結束日期
      * @return float|null
      */
-    public function calculateImpliedVolatilityForOption(
-        int $optionId,
-        ?string $date = null,
-        float $riskFreeRate = 0.015
+    public function calculateEWMAVolatility(
+        int $stockId,
+        int $periodDays = 30,
+        float $lambda = 0.94,
+        ?string $endDate = null
     ): ?float {
-        $date = $date ?: now()->format('Y-m-d');
+        $endDate = $endDate ?: now()->format('Y-m-d');
 
-        // 取得選擇權資料
-        $option = Option::with(['latestPrice'])->find($optionId);
-        
-        if (!$option) {
-            Log::warning('找不到選擇權', ['option_id' => $optionId]);
+        $prices = StockPrice::where('stock_id', $stockId)
+            ->where('trade_date', '<=', $endDate)
+            ->orderBy('trade_date', 'desc')
+            ->limit($periodDays + 1)
+            ->pluck('close')
+            ->reverse()
+            ->values();
+
+        if ($prices->count() < $periodDays + 1) {
             return null;
         }
 
-        // 取得選擇權當日價格
-        $optionPrice = OptionPrice::where('option_id', $optionId)
-            ->where('trade_date', $date)
-            ->first();
-
-        if (!$optionPrice || !$optionPrice->close) {
-            Log::warning('找不到選擇權價格', [
-                'option_id' => $optionId,
-                'date' => $date
-            ]);
-            return null;
-        }
-
-        // 如果已經有 IV 值，直接返回
-        if ($optionPrice->implied_volatility) {
-            return $optionPrice->implied_volatility;
-        }
-
-        // 取得標的價格
-        // 對於 TXO，需要取得台指期或加權指數
-        $spotPrice = $this->getUnderlyingPrice($option->underlying, $date);
-        
-        if (!$spotPrice) {
-            Log::warning('無法取得標的價格', [
-                'underlying' => $option->underlying,
-                'date' => $date
-            ]);
-            return null;
-        }
-
-        // 計算到期時間(年)
-        $now = Carbon::parse($date);
-        $expiry = Carbon::parse($option->expiry_date);
-        $timeToExpiry = $now->diffInDays($expiry) / 365;
-
-        if ($timeToExpiry <= 0) {
-            Log::warning('選擇權已到期', [
-                'option_id' => $optionId,
-                'expiry_date' => $option->expiry_date
-            ]);
-            return null;
-        }
-
-        // 使用 Black-Scholes 反推隱含波動率
-        $impliedVol = $this->blackScholesService->calculateImpliedVolatility(
-            $optionPrice->close,
-            $spotPrice,
-            $option->strike_price,
-            $timeToExpiry,
-            $riskFreeRate,
-            $option->option_type
-        );
-
-        // 儲存計算結果
-        if ($impliedVol !== null) {
-            $optionPrice->update(['implied_volatility' => $impliedVol]);
-        }
-
-        return $impliedVol;
-    }
-
-    /**
-     * 計算波動率偏斜 (Volatility Skew)
-     * OTM Put IV - OTM Call IV
-     *
-     * @param string $underlying 標的代碼 (例如: TXO)
-     * @param string $expiryDate 到期日
-     * @param float $spotPrice 標的現價
-     * @param string|null $date 計算日期
-     * @return array|null
-     */
-    public function calculateVolatilitySkew(
-        string $underlying,
-        string $expiryDate,
-        float $spotPrice,
-        ?string $date = null
-    ): ?array {
-        $date = $date ?: now()->format('Y-m-d');
-
-        // 找出該到期月份的所有選擇權
-        $options = Option::where('underlying', $underlying)
-            ->where('expiry_date', $expiryDate)
-            ->where('is_active', true)
-            ->with(['prices' => function ($query) use ($date) {
-                $query->where('trade_date', $date)
-                    ->whereNotNull('implied_volatility');
-            }])
-            ->get();
-
-        if ($options->isEmpty()) {
-            return null;
-        }
-
-        // 分類 Call 和 Put
-        $calls = $options->where('option_type', 'call');
-        $puts = $options->where('option_type', 'put');
-
-        // 找出 OTM 選擇權的 IV
-        $otmCallIV = $this->getOTMImpliedVolatility($calls, $spotPrice, 'call');
-        $otmPutIV = $this->getOTMImpliedVolatility($puts, $spotPrice, 'put');
-
-        if (!$otmCallIV || !$otmPutIV) {
-            return null;
-        }
-
-        $skew = $otmPutIV - $otmCallIV;
-
-        return [
-            'date' => $date,
-            'underlying' => $underlying,
-            'expiry_date' => $expiryDate,
-            'spot_price' => $spotPrice,
-            'otm_call_iv' => $otmCallIV,
-            'otm_put_iv' => $otmPutIV,
-            'skew' => round($skew, 6),
-            'skew_percentage' => round(($skew / $otmCallIV) * 100, 2)
-        ];
-    }
-
-    /**
-     * 建立波動率曲面 (Volatility Surface)
-     * 
-     * @param string $underlying 標的代碼
-     * @param string|null $date 計算日期
-     * @return array
-     */
-    public function buildVolatilitySurface(
-        string $underlying,
-        ?string $date = null
-    ): array {
-        $date = $date ?: now()->format('Y-m-d');
-
-        // 取得所有活躍的選擇權及其 IV
-        $options = Option::where('underlying', $underlying)
-            ->where('is_active', true)
-            ->where('expiry_date', '>=', $date)
-            ->with(['prices' => function ($query) use ($date) {
-                $query->where('trade_date', $date)
-                    ->whereNotNull('implied_volatility');
-            }])
-            ->get();
-
-        if ($options->isEmpty()) {
-            return [];
-        }
-
-        // 取得標的價格
-        $spotPrice = $this->getUnderlyingPrice($underlying, $date);
-
-        // 按到期日和履約價分組
-        $surface = [];
-        
-        foreach ($options as $option) {
-            $price = $option->prices->first();
-            
-            if (!$price || !$price->implied_volatility) {
-                continue;
+        // 計算對數收益率
+        $returns = [];
+        for ($i = 1; $i < $prices->count(); $i++) {
+            if ($prices[$i - 1] > 0) {
+                $returns[] = log($prices[$i] / $prices[$i - 1]);
             }
-
-            // 計算 Moneyness (K/S)
-            $moneyness = $spotPrice > 0 ? $option->strike_price / $spotPrice : 0;
-            
-            // 計算到期天數
-            $daysToExpiry = Carbon::parse($date)->diffInDays(Carbon::parse($option->expiry_date));
-
-            $surface[] = [
-                'option_id' => $option->id,
-                'option_code' => $option->option_code,
-                'option_type' => $option->option_type,
-                'strike_price' => $option->strike_price,
-                'expiry_date' => $option->expiry_date,
-                'days_to_expiry' => $daysToExpiry,
-                'moneyness' => round($moneyness, 4),
-                'implied_volatility' => $price->implied_volatility,
-                'volume' => $price->volume,
-                'open_interest' => $price->open_interest
-            ];
         }
 
-        // 按到期天數和履約價排序
-        usort($surface, function ($a, $b) {
-            if ($a['days_to_expiry'] === $b['days_to_expiry']) {
-                return $a['strike_price'] <=> $b['strike_price'];
-            }
-            return $a['days_to_expiry'] <=> $b['days_to_expiry'];
-        });
+        if (empty($returns)) {
+            return null;
+        }
 
-        return [
-            'date' => $date,
-            'underlying' => $underlying,
-            'spot_price' => $spotPrice,
-            'data_points' => $surface,
-            'total_points' => count($surface)
-        ];
+        // EWMA 計算
+        $variance = pow($returns[0], 2);
+        
+        for ($i = 1; $i < count($returns); $i++) {
+            $variance = $lambda * $variance + (1 - $lambda) * pow($returns[$i], 2);
+        }
+
+        // 年化
+        return round(sqrt($variance * self::TRADING_DAYS_PER_YEAR), 6);
     }
 
     /**
-     * 批次更新波動率資料
+     * 批次更新波動率
      *
      * @param int $stockId 股票 ID
      * @param string|null $date 計算日期
-     * @return array
+     * @return array 計算結果
      */
-    public function batchUpdateVolatilities(
-        int $stockId,
-        ?string $date = null
-    ): array {
+    public function batchUpdateVolatilities(int $stockId, ?string $date = null): array
+    {
         $date = $date ?: now()->format('Y-m-d');
         
         Log::info('開始批次更新波動率', [
@@ -381,33 +381,48 @@ class VolatilityService
 
         $results = [];
 
-        // 計算不同期間的歷史波動率
-        $periods = [10, 20, 30, 60, 90, 120];
-        
+        // 計算不同期間的波動率
+        $periods = [10, 20, 30, 60, 90, 120, 252];
+        $methods = ['close-to-close', 'parkinson', 'garman-klass'];
+
         foreach ($periods as $period) {
-            $hv = $this->calculateHistoricalVolatility($stockId, $period, $date);
-            $rv = $this->calculateRealizedVolatility($stockId, $period, $date);
+            foreach ($methods as $method) {
+                $hv = $this->calculateHistoricalVolatility($stockId, $period, $date, true, $method);
+                
+                if ($hv !== null) {
+                    // 只儲存 close-to-close 方法的結果到資料庫
+                    if ($method === 'close-to-close') {
+                        $rv = $this->calculateRealizedVolatility($stockId, $period, $date);
+                        $ewma = $this->calculateEWMAVolatility($stockId, $period, 0.94, $date);
 
-            if ($hv !== null) {
-                // 儲存到資料庫
-                Volatility::updateOrCreate(
-                    [
-                        'stock_id' => $stockId,
-                        'calculation_date' => $date,
-                        'period_days' => $period
-                    ],
-                    [
+                        Volatility::updateOrCreate(
+                            [
+                                'stock_id' => $stockId,
+                                'calculation_date' => $date,
+                                'period_days' => $period
+                            ],
+                            [
+                                'historical_volatility' => $hv,
+                                'realized_volatility' => $rv,
+                                'calculation_params' => json_encode([
+                                    'method' => $method,
+                                    'ewma' => $ewma,
+                                    'lambda' => 0.94,
+                                ])
+                            ]
+                        );
+                    }
+
+                    $results[$period][$method] = [
                         'historical_volatility' => $hv,
-                        'realized_volatility' => $rv,
-                    ]
-                );
-
-                $results[$period] = [
-                    'historical_volatility' => $hv,
-                    'realized_volatility' => $rv
-                ];
+                        'historical_volatility_pct' => round($hv * 100, 2) . '%',
+                    ];
+                }
             }
         }
+
+        // 清除相關快取
+        Cache::tags(['volatility', "stock:{$stockId}"])->flush();
 
         Log::info('波動率更新完成', [
             'stock_id' => $stockId,
@@ -430,101 +445,132 @@ class VolatilityService
         int $stockId,
         int $lookbackDays = 252
     ): array {
-        $periods = [10, 20, 30, 60, 90, 120, 252];
-        $cone = [];
+        $periods = [10, 20, 30, 60, 90, 120, 180, 252];
+        $coneData = [];
 
         foreach ($periods as $period) {
-            // 計算過去 lookbackDays 中每個 period 的 HV
             $hvValues = [];
-            
-            for ($i = 0; $i < $lookbackDays; $i++) {
-                $date = now()->subDays($i)->format('Y-m-d');
-                $hv = $this->calculateHistoricalVolatility($stockId, $period, $date);
+
+            // 取得足夠的價格資料
+            $prices = StockPrice::where('stock_id', $stockId)
+                ->orderBy('trade_date', 'desc')
+                ->limit($lookbackDays + $period + 1)
+                ->pluck('close')
+                ->reverse()
+                ->values()
+                ->toArray();
+
+            if (count($prices) < $period + 1) {
+                continue;
+            }
+
+            // 滾動計算每天的 HV
+            for ($i = $period; $i < count($prices); $i++) {
+                $slice = array_slice($prices, $i - $period, $period + 1);
                 
-                if ($hv !== null) {
+                // 計算對數收益率
+                $returns = [];
+                for ($j = 1; $j < count($slice); $j++) {
+                    if ($slice[$j - 1] > 0) {
+                        $returns[] = log($slice[$j] / $slice[$j - 1]);
+                    }
+                }
+
+                if (count($returns) >= 2) {
+                    $mean = array_sum($returns) / count($returns);
+                    $variance = 0;
+                    foreach ($returns as $return) {
+                        $variance += pow($return - $mean, 2);
+                    }
+                    $variance /= (count($returns) - 1);
+                    $hv = sqrt($variance * self::TRADING_DAYS_PER_YEAR);
                     $hvValues[] = $hv;
                 }
             }
 
-            if (!empty($hvValues)) {
-                sort($hvValues);
-                $count = count($hvValues);
+            if (count($hvValues) < 10) {
+                continue;
+            }
 
-                $cone[$period] = [
-                    'min' => round(min($hvValues), 4),
-                    'percentile_10' => round($hvValues[intval($count * 0.1)], 4),
-                    'percentile_25' => round($hvValues[intval($count * 0.25)], 4),
-                    'median' => round($hvValues[intval($count * 0.5)], 4),
-                    'percentile_75' => round($hvValues[intval($count * 0.75)], 4),
-                    'percentile_90' => round($hvValues[intval($count * 0.9)], 4),
-                    'max' => round(max($hvValues), 4),
-                    'current' => round($hvValues[0], 4) // 最新的值
+            // 排序計算統計值
+            sort($hvValues);
+            $count = count($hvValues);
+
+            $coneData[] = [
+                'period' => $period,
+                'period_label' => $period . '天',
+                'current' => round(end($hvValues) * 100, 2),
+                'min' => round($hvValues[0] * 100, 2),
+                'max' => round($hvValues[$count - 1] * 100, 2),
+                'p10' => round($hvValues[intval($count * 0.1)] * 100, 2),
+                'p25' => round($hvValues[intval($count * 0.25)] * 100, 2),
+                'median' => round($hvValues[intval($count * 0.5)] * 100, 2),
+                'p75' => round($hvValues[intval($count * 0.75)] * 100, 2),
+                'p90' => round($hvValues[intval($count * 0.9)] * 100, 2),
+                'mean' => round((array_sum($hvValues) / $count) * 100, 2),
+                'std' => round($this->calculateStd($hvValues) * 100, 2),
+                'sample_count' => $count,
+            ];
+        }
+
+        return $coneData;
+    }
+
+    /**
+     * 計算變異數
+     */
+    private function calculateVariance(array $values): float
+    {
+        if (count($values) < 2) {
+            return 0;
+        }
+
+        $mean = array_sum($values) / count($values);
+        $variance = 0;
+        
+        foreach ($values as $value) {
+            $variance += pow($value - $mean, 2);
+        }
+        
+        return $variance / (count($values) - 1);
+    }
+
+    /**
+     * 計算標準差
+     */
+    private function calculateStd(array $values): float
+    {
+        return sqrt($this->calculateVariance($values));
+    }
+
+    /**
+     * 取得波動率歷史趨勢
+     *
+     * @param int $stockId
+     * @param int $periodDays 計算期間
+     * @param int $historyDays 歷史天數
+     * @return array
+     */
+    public function getVolatilityTrend(
+        int $stockId,
+        int $periodDays = 30,
+        int $historyDays = 90
+    ): array {
+        $trend = [];
+        $endDate = now();
+
+        for ($i = 0; $i < $historyDays; $i++) {
+            $date = $endDate->copy()->subDays($i)->format('Y-m-d');
+            $hv = $this->calculateHistoricalVolatility($stockId, $periodDays, $date);
+            
+            if ($hv !== null) {
+                $trend[] = [
+                    'date' => $date,
+                    'hv' => round($hv * 100, 2),
                 ];
             }
         }
 
-        return $cone;
-    }
-
-    /**
-     * 取得 OTM 選擇權的平均隱含波動率
-     */
-    protected function getOTMImpliedVolatility($options, float $spotPrice, string $type): ?float
-    {
-        $ivValues = [];
-
-        foreach ($options as $option) {
-            $price = $option->prices->first();
-            
-            if (!$price || !$price->implied_volatility) {
-                continue;
-            }
-
-            // 判斷是否為 OTM
-            $isOTM = false;
-            if ($type === 'call') {
-                $isOTM = $option->strike_price > $spotPrice;
-            } else {
-                $isOTM = $option->strike_price < $spotPrice;
-            }
-
-            if ($isOTM) {
-                $ivValues[] = $price->implied_volatility;
-            }
-        }
-
-        if (empty($ivValues)) {
-            return null;
-        }
-
-        // 返回平均值
-        return array_sum($ivValues) / count($ivValues);
-    }
-
-    /**
-     * 取得標的資產價格
-     */
-    protected function getUnderlyingPrice(string $underlying, string $date): ?float
-    {
-        // 快取 key
-        $cacheKey = "underlying_price_{$underlying}_{$date}";
-
-        return Cache::remember($cacheKey, 3600, function () use ($underlying, $date) {
-            if ($underlying === 'TXO') {
-                // 對於台指選擇權，取得加權指數
-                $stock = Stock::where('symbol', '^TWII')->first();
-                
-                if ($stock) {
-                    $price = StockPrice::where('stock_id', $stock->id)
-                        ->where('trade_date', '<=', $date)
-                        ->orderBy('trade_date', 'desc')
-                        ->first();
-                    
-                    return $price ? $price->close : null;
-                }
-            }
-
-            return null;
-        });
+        return array_reverse($trend);
     }
 }
