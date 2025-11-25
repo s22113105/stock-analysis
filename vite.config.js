@@ -45,29 +45,7 @@ export default defineConfig({
             host: 'localhost',
         },
         watch: {
-            usePolling: true, // 保留這行，對 Windows Docker 很重要
+            usePolling: true,
         },
-        // 👇👇👇 這裡就是讓前端能拿到資料的關鍵！ 👇👇👇
-        proxy: {
-            '/api': {
-                target: 'http://stock-analysis-app:8000', // 指向後端容器
-                changeOrigin: true,
-                secure: false,
-                // 確保路徑正確傳遞
-                rewrite: (path) => path.replace(/^\/api/, '/api'),
-                configure: (proxy, _options) => {
-                    proxy.on('error', (err, _req, _res) => {
-                        console.log('Proxy error:', err);
-                    });
-                    proxy.on('proxyReq', (proxyReq, req, _res) => {
-                        console.log('Sending Request:', req.method, req.url);
-                    });
-                    proxy.on('proxyRes', (proxyRes, req, _res) => {
-                        console.log('Received Response:', proxyRes.statusCode, req.url);
-                    });
-                },
-            },
-        },
-        // 👆👆👆 結束 👆👆👆
     },
 });
