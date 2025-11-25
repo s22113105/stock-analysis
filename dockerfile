@@ -37,7 +37,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     tensorflow \
     statsmodels \
     scipy \
-    pmdarima
+    pmdarima \
+    arch
 
 # 建立 python 符號連結（可選）
 RUN ln -sf /usr/bin/python3 /usr/bin/python

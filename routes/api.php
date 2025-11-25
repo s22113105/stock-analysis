@@ -65,16 +65,14 @@ Route::prefix('stocks')->group(function () {
 // Option API (選擇權)
 // ==========================================
 Route::prefix('options')->group(function () {
-    // 基本 CRUD
+    // 列表
     Route::get('/', [OptionController::class, 'index']);
-    Route::get('/{id}', [OptionController::class, 'show']);
+
+    // ⭐⭐⭐ 這兩行必須在 {id} 之前 ⭐⭐⭐
+    Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
-    // 🌟 [新功能] 智慧選擇權鏈 T 字報價表 (純報價版)
-    // 用於前端 Options.vue 的主畫面
-    Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
-
-    // TXO 分析功能 (舊有路由，保留做為備用或圖表數據源)
+    // TXO 分析
     Route::prefix('txo')->group(function () {
         Route::get('/trend', [OptionController::class, 'txoTrend']);
         Route::get('/volume-analysis', [OptionController::class, 'txoVolumeAnalysis']);
@@ -83,6 +81,9 @@ Route::prefix('options')->group(function () {
         Route::get('/sentiment', [OptionController::class, 'txoSentiment']);
         Route::get('/oi-distribution', [OptionController::class, 'txoOiDistribution']);
     });
+
+    // ⭐⭐⭐ {id} 必須放最後 ⭐⭐⭐
+    Route::get('/{id}', [OptionController::class, 'show']);
 });
 
 // ==========================================
@@ -99,7 +100,15 @@ Route::prefix('black-scholes')->group(function () {
 Route::prefix('volatility')->group(function () {
     Route::get('/historical/{stock_id}', [VolatilityController::class, 'historical']);
     Route::get('/implied/{option_id}', [VolatilityController::class, 'implied']);
-    Route::get('/compare/{stock_id}', [VolatilityController::class, 'compare']);
+
+    // [修正] 補上缺失的路由，並移除不存在的 compare
+    Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);       // 波動率錐
+    Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']); // 波動率曲面 (注意: Controller 目前預期 ID)
+    Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);       // 波動率偏斜
+    Route::get('/garch/{stock_id}', [VolatilityController::class, 'garch']);     // GARCH 模型
+
+    // 手動觸發計算
+    Route::post('/calculate', [VolatilityController::class, 'calculate']);
 });
 
 // ==========================================
