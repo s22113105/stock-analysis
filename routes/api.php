@@ -62,30 +62,17 @@ Route::prefix('stocks')->group(function () {
 });
 
 // ==========================================
-// Option API (選擇權) - 更新版本
+// Option API (選擇權)
 // ==========================================
 Route::prefix('options')->group(function () {
-    // 基本 CRUD (保留原有的)
+    // 列表
     Route::get('/', [OptionController::class, 'index']);
-    Route::get('/{id}', [OptionController::class, 'show']);
+
+    // ⭐⭐⭐ 這兩行必須在 {id} 之前 ⭐⭐⭐
+    Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
-    // 選擇權鏈 T 字報價表路由群組
-    Route::prefix('chain-table')->group(function () {
-        // 主要端點 - 取得 T 字報價表
-        Route::get('/', [OptionChainController::class, 'getChainTable']);
-
-        // 測試端點 - 檢查資料庫連線
-        Route::get('/test', [OptionChainController::class, 'testConnection']);
-
-        // 市場狀態端點
-        Route::get('/market-status', [OptionChainController::class, 'getMarketStatus']);
-
-        // 清除快取端點
-        Route::post('/clear-cache', [OptionChainController::class, 'clearCache']);
-    });
-
-    // TXO 分析功能 (保留原有的)
+    // TXO 分析
     Route::prefix('txo')->group(function () {
         Route::get('/trend', [OptionController::class, 'txoTrend']);
         Route::get('/volume-analysis', [OptionController::class, 'txoVolumeAnalysis']);
@@ -94,6 +81,9 @@ Route::prefix('options')->group(function () {
         Route::get('/sentiment', [OptionController::class, 'txoSentiment']);
         Route::get('/oi-distribution', [OptionController::class, 'txoOiDistribution']);
     });
+
+    // ⭐⭐⭐ {id} 必須放最後 ⭐⭐⭐
+    Route::get('/{id}', [OptionController::class, 'show']);
 });
 
 // ==========================================
@@ -110,13 +100,13 @@ Route::prefix('black-scholes')->group(function () {
 Route::prefix('volatility')->group(function () {
     Route::get('/historical/{stock_id}', [VolatilityController::class, 'historical']);
     Route::get('/implied/{option_id}', [VolatilityController::class, 'implied']);
-    
+
     // [修正] 補上缺失的路由，並移除不存在的 compare
     Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);       // 波動率錐
     Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']); // 波動率曲面 (注意: Controller 目前預期 ID)
     Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);       // 波動率偏斜
     Route::get('/garch/{stock_id}', [VolatilityController::class, 'garch']);     // GARCH 模型
-    
+
     // 手動觸發計算
     Route::post('/calculate', [VolatilityController::class, 'calculate']);
 });
