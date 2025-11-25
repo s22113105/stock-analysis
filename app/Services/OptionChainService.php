@@ -5,130 +5,69 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use App\Services\BlackScholesService;
 
-/**
- * 選擇權鏈服務 (智慧日期版)
- * 修正問題：避免全市場最新日期與特定合約交易日不一致導致的資料空白
- * 選擇權鏈服務 - 改進版本
- * 確保資料能夠正確讀取並顯示
- */
 class OptionChainService
 {
-    /**
-     * 取得選擇權 T 字報價表
-     *
-     * @param string|null $expiryDate 指定到期日
-     * @return array
-     */
+    protected $blackScholesService;
+
+    public function __construct(BlackScholesService $blackScholesService)
+    {
+        $this->blackScholesService = $blackScholesService;
+    }
+
     public function getOptionChain(?string $expiryDate = null): array
     {
-        // 1. 取得所有可用的到期日 (從 options 表找)
-        $availableExpiries = DB::table('options')
-            ->where('underlying', 'TXO')
-            ->where('is_active', true)
-            ->select('expiry_date')
-            ->distinct()
-            ->orderBy('expiry_date')
-            ->pluck('expiry_date');
-
-        if ($availableExpiries->isEmpty()) {
-            return ['error' => '資料庫中找不到任何 TXO 合約，請先執行匯入指令'];
-        }
-
-        // 2. 決定到期日
-        if (!$expiryDate || !$availableExpiries->contains($expiryDate)) {
-            $expiryDate = $availableExpiries->first();
-        }
-
-        // 3. [關鍵修正] 針對「這個到期日」，找出它最新的交易日期
-        // 不要用全域的 max('trade_date')，因為可能別的合約有更新的日期，導致這裡抓不到
-        $latestTradeDate = DB::table('option_prices')
-            ->join('options', 'option_prices.option_id', '=', 'options.id')
-            ->where('options.expiry_date', $expiryDate)
-            ->where('options.underlying', 'TXO')
-            ->max('option_prices.trade_date');
-
-        // 如果該合約完全沒資料，才使用全域最新日期當備案
-        if (!$latestTradeDate) {
-            $latestTradeDate = DB::table('option_prices')->max('trade_date');
-        }
-
-        if (!$latestTradeDate) {
-            return ['error' => "資料庫有合約但無價格資料，請執行: php artisan import:taifex"];
-        }
-
-        // 4. 使用 SQL JOIN 直接查詢
-        $rows = DB::table('options as o')
-            ->leftJoin('option_prices as p', function ($join) use ($latestTradeDate) {
-                $join->on('o.id', '=', 'p.option_id')
-                    ->where('p.trade_date', '=', $latestTradeDate);
-            })
-            ->where('o.expiry_date', $expiryDate)
-            ->where('o.underlying', 'TXO')
-            ->select([
-                'o.id',
-                'o.option_code',
-                'o.strike_price',
-                'o.option_type',
-                'p.close',
-                'p.settlement',
-                'p.volume',
-                'p.open_interest as oi',
-                'p.implied_volatility as iv',
-                'p.delta'
-            ])
-            ->orderBy('o.strike_price')
-            ->get();
         try {
-            // 1. 先確認資料庫中是否有選擇權資料
+            // 1. 檢查是否有選擇權資料
             $hasOptions = DB::table('options')->exists();
             if (!$hasOptions) {
-                Log::warning('資料庫中沒有選擇權資料');
-                return $this->emptyResponse('資料庫中沒有選擇權資料，請先執行資料爬蟲');
+                return $this->emptyResponse('資料庫中沒有選擇權資料');
             }
 
-            // 2. 取得所有可用的到期日（確保有價格資料）
-            $availableExpiries = DB::table('options as o')
-                ->join('option_prices as p', 'o.id', '=', 'p.option_id')
-                ->where('o.underlying', 'TXO')
-                ->where('o.is_active', true)
-                ->select('o.expiry_date')
+            // 2. 取得所有可用的到期日
+            $availableExpiries = DB::table('options')
+                ->where('underlying', 'TXO')
+                ->where('is_active', true)
+                ->select('expiry_date')
                 ->distinct()
-                ->orderBy('o.expiry_date', 'asc')
+                ->orderBy('expiry_date')
                 ->pluck('expiry_date')
                 ->map(function ($date) {
-                    // 確保日期格式一致
                     return Carbon::parse($date)->format('Y-m-d');
                 })
                 ->unique()
-                ->values();
+                ->values()
+                ->toArray();
 
-            Log::info('可用到期日', ['expiries' => $availableExpiries->toArray()]);
-
-            if ($availableExpiries->isEmpty()) {
-                return $this->emptyResponse('沒有找到有價格資料的選擇權合約');
+            if (empty($availableExpiries)) {
+                return $this->emptyResponse('沒有可用的到期日');
             }
 
             // 3. 決定要查詢的到期日
-            if (empty($expiryDate) || !$availableExpiries->contains($expiryDate)) {
-                // 預設選擇最近的到期日
-                $today = Carbon::now()->format('Y-m-d');
-                $expiryDate = $availableExpiries->first(function ($date) use ($today) {
-                    return $date >= $today;
-                }) ?: $availableExpiries->first();
+            if (empty($expiryDate) || !in_array($expiryDate, $availableExpiries)) {
+                $expiryDate = $availableExpiries[0];
             }
-
-            Log::info('查詢到期日', ['expiry_date' => $expiryDate]);
 
             // 4. 取得最新的交易日期
             $latestTradeDate = DB::table('option_prices')->max('trade_date');
             if (!$latestTradeDate) {
-                return $this->emptyResponse('選擇權價格資料表是空的');
+                return $this->emptyResponse('沒有價格資料');
             }
 
-            Log::info('最新交易日', ['trade_date' => $latestTradeDate]);
+            // 5. 取得現貨價格（大盤指數）
+            $spotPrice = $this->getCurrentSpotPrice();
 
-            // 5. 查詢選擇權資料（使用子查詢確保效能）
+            // 6. 計算到期時間（年）
+            $now = Carbon::parse($latestTradeDate);
+            $expiry = Carbon::parse($expiryDate);
+            $daysToExpiry = max(1, $now->diffInDays($expiry));
+            $timeToExpiry = $daysToExpiry / 365.0;
+
+            // 7. 無風險利率（台灣約 1.5%）
+            $riskFreeRate = 0.015;
+
+            // 8. 查詢選擇權資料
             $options = DB::table('options as o')
                 ->leftJoin('option_prices as p', function ($join) use ($latestTradeDate) {
                     $join->on('o.id', '=', 'p.option_id')
@@ -142,244 +81,190 @@ class OptionChainService
                     'o.option_code',
                     'o.strike_price',
                     'o.option_type',
-                    'o.expiry_date',
-                    // 價格資料
-                    'p.open',
-                    'p.high',
-                    'p.low',
                     'p.close',
+                    'p.settlement',
                     'p.volume',
                     'p.open_interest',
                     'p.implied_volatility',
-                    // Greeks
                     'p.delta',
                     'p.gamma',
                     'p.theta',
-                    'p.vega',
-                    'p.rho'
+                    'p.vega'
                 ])
-                ->orderBy('o.strike_price', 'asc')
-                ->orderBy('o.option_type', 'asc')
+                ->orderBy('o.strike_price')
                 ->get();
 
-            Log::info('查詢結果數量', ['count' => $options->count()]);
-
             if ($options->isEmpty()) {
-                return $this->emptyResponse("沒有找到到期日 {$expiryDate} 的選擇權資料");
+                return $this->emptyResponse("沒有找到到期日 {$expiryDate} 的資料");
             }
 
-            // 6. 取得當前指數價格（用於判斷 ATM）
-            $spotPrice = $this->getCurrentSpotPrice();
-            Log::info('當前指數價格', ['spot_price' => $spotPrice]);
-
-            // 7. 組裝 T 字報價結構
+            // 9. 組裝 T 字報價結構
             $chainData = [];
             $strikes = $options->pluck('strike_price')->unique()->sort()->values();
-
-            // 找出最接近現貨價格的履約價（ATM）
             $atmStrike = $this->findATMStrike($strikes, $spotPrice);
 
             foreach ($strikes as $strike) {
-                $callOption = $options->firstWhere(function ($item) use ($strike) {
-                    return $item->strike_price == $strike && strtoupper($item->option_type) == 'CALL';
-                });
+                $callOption = null;
+                $putOption = null;
 
-                $putOption = $options->firstWhere(function ($item) use ($strike) {
-                    return $item->strike_price == $strike && strtoupper($item->option_type) == 'PUT';
-                });
+                foreach ($options as $opt) {
+                    if ($opt->strike_price == $strike) {
+                        if (strtolower($opt->option_type) == 'call') {
+                            $callOption = $opt;
+                        } else {
+                            $putOption = $opt;
+                        }
+                    }
+                }
 
-                // 組裝每個履約價的資料
                 $chainData[] = [
                     'strike' => intval($strike),
                     'is_atm' => intval($strike) == $atmStrike,
-                    'call' => $this->formatOptionData($callOption, $spotPrice, 'CALL'),
-                    'put' => $this->formatOptionData($putOption, $spotPrice, 'PUT')
+                    'call' => $this->formatOptionDataWithGreeks(
+                        $callOption,
+                        $spotPrice,
+                        $strike,
+                        $timeToExpiry,
+                        $riskFreeRate,
+                        'call'
+                    ),
+                    'put' => $this->formatOptionDataWithGreeks(
+                        $putOption,
+                        $spotPrice,
+                        $strike,
+                        $timeToExpiry,
+                        $riskFreeRate,
+                        'put'
+                    )
                 ];
             }
 
-            // 8. 回傳完整資料
             return [
                 'success' => true,
                 'chain' => $chainData,
-                'available_expiries' => $availableExpiries->toArray(),
+                'available_expiries' => $availableExpiries,
                 'expiry_date' => $expiryDate,
                 'trade_date' => $latestTradeDate,
                 'atm_strike' => $atmStrike,
                 'spot_price' => $spotPrice,
+                'days_to_expiry' => $daysToExpiry,
                 'total_strikes' => count($chainData)
             ];
         } catch (\Exception $e) {
-            Log::error('OptionChainService 錯誤', [
-                'message' => $e->getMessage(),
+            Log::error('OptionChainService 錯誤: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
-
             return $this->emptyResponse('系統錯誤: ' . $e->getMessage());
         }
     }
 
     /**
-     * 格式化單個選擇權資料
+     * 格式化選擇權資料並計算 Greeks
      */
-    private function formatOptionData($option, $spotPrice, $type): ?array
-    {
+    private function formatOptionDataWithGreeks(
+        $option,
+        float $spotPrice,
+        float $strike,
+        float $timeToExpiry,
+        float $riskFreeRate,
+        string $type
+    ): ?array {
         if (!$option) {
             return null;
         }
 
-        $strike = floatval($option->strike_price);
-        $isCall = strtoupper($type) == 'CALL';
-
-        // 判斷是否價內 (ITM)
+        $isCall = strtolower($type) == 'call';
         $isITM = $isCall ? ($spotPrice > $strike) : ($spotPrice < $strike);
 
-        // 決定顯示價格（優先順序：收盤價 > 最高價 > 開盤價）
-        $displayPrice = $option->close ?? $option->high ?? $option->open ?? 0;
+        // 取得市場價格
+        $marketPrice = floatval($option->close ?? $option->settlement ?? 0);
+
+        // 預設值
+        $delta = floatval($option->delta ?? 0);
+        $gamma = floatval($option->gamma ?? 0);
+        $theta = floatval($option->theta ?? 0);
+        $vega = floatval($option->vega ?? 0);
+        $iv = floatval($option->implied_volatility ?? 0);
+
+        // 如果有市場價格且 Greeks 為空，則計算
+        if ($marketPrice > 0 && $timeToExpiry > 0) {
+            try {
+                // 計算隱含波動率（如果沒有）
+                if ($iv <= 0) {
+                    $calculatedIV = $this->blackScholesService->calculateImpliedVolatility(
+                        $marketPrice,
+                        $spotPrice,
+                        $strike,
+                        $timeToExpiry,
+                        $riskFreeRate,
+                        $type
+                    );
+                    if ($calculatedIV !== null && $calculatedIV > 0) {
+                        $iv = $calculatedIV;
+                    }
+                }
+
+                // 使用 IV 計算 Greeks（如果 delta 為 0）
+                if ($delta == 0 && $iv > 0) {
+                    $greeks = $this->blackScholesService->calculateGreeks(
+                        $spotPrice,
+                        $strike,
+                        $timeToExpiry,
+                        $riskFreeRate,
+                        $iv,
+                        $type
+                    );
+
+                    $delta = $greeks['delta'] ?? 0;
+                    $gamma = $greeks['gamma'] ?? 0;
+                    $theta = $greeks['theta'] ?? 0;
+                    $vega = $greeks['vega'] ?? 0;
+                }
+            } catch (\Exception $e) {
+                // 計算失敗，使用預設值
+                Log::debug('Greeks 計算失敗: ' . $e->getMessage());
+            }
+        }
 
         return [
             'id' => $option->id,
             'code' => $option->option_code,
-            'price' => floatval($displayPrice),
+            'price' => $marketPrice,
             'volume' => intval($option->volume ?? 0),
             'oi' => intval($option->open_interest ?? 0),
-            'iv' => floatval($option->implied_volatility ?? 0) * 100, // 轉為百分比
-            'delta' => floatval($option->delta ?? 0),
-            'gamma' => floatval($option->gamma ?? 0),
-            'theta' => floatval($option->theta ?? 0),
-            'vega' => floatval($option->vega ?? 0),
+            'iv' => round($iv * 100, 2),  // 轉為百分比
+            'delta' => round($delta, 4),
+            'gamma' => round($gamma, 6),
+            'theta' => round($theta, 4),
+            'vega' => round($vega, 4),
             'is_itm' => $isITM
         ];
     }
 
     /**
-     * 取得當前指數價格
-     * 可以從股票資料表取得加權指數，或使用固定值測試
+     * 取得現貨價格（大盤指數）
      */
     private function getCurrentSpotPrice(): float
     {
-        // 嘗試從股票資料表取得大盤指數
-        $indexPrice = DB::table('stocks as s')
-            ->join('stock_prices as sp', 's.id', '=', 'sp.stock_id')
-            ->where('s.symbol', 'TAIEX') // 或其他代表大盤的代碼
-            ->orWhere('s.symbol', '^TWII')
-            ->orderBy('sp.trade_date', 'desc')
-            ->value('sp.close');
+        // 從 TXO 選擇權的 ATM 履約價推算
+        $atmPrice = DB::table('options as o')
+            ->join('option_prices as p', 'o.id', '=', 'p.option_id')
+            ->where('o.underlying', 'TXO')
+            ->where('p.volume', '>', 0)
+            ->orderBy('p.trade_date', 'desc')
+            ->orderBy('p.volume', 'desc')
+            ->value('o.strike_price');
 
-        if ($indexPrice) {
-            return floatval($indexPrice);
+        if ($atmPrice) {
+            return floatval($atmPrice);
         }
 
-        // 如果沒有指數資料，使用預設值或計算平均
-        // 這裡使用 18000 作為預設值（可根據實際情況調整）
-        return 18000.0;
+        // 預設值
+        return 23000.0;
     }
 
     /**
-     * 找出最接近現貨價格的履約價 (ATM)
-     */
-    private function findATMStrike($strikes, $spotPrice): int
-    {
-        if ($strikes->isEmpty()) {
-            return 0;
-        }
-
-        $minDiff = PHP_FLOAT_MAX;
-        $atmStrike = $strikes->first();
-
-        foreach ($strikes as $strike) {
-            $diff = abs(floatval($strike) - $spotPrice);
-            if ($diff < $minDiff) {
-                $minDiff = $diff;
-                $atmStrike = $strike;
-            }
-        }
-
-        ksort($chain);
-
-        return intval($atmStrike);
-    }
-
-    /**
-     * 回傳空資料結構
-     */
-    private function emptyResponse($message = ''): array
-    {
-        return [
-            'expiry_date' => $expiryDate,
-            'trade_date' => $latestTradeDate,
-            'available_expiries' => $availableExpiries,
-            'atm_strike' => $atmStrike,
-            'chain' => array_values($chain),
-        ];
-            'success' => false,
-            'chain' => [],
-            'available_expiries' => [],
-            'expiry_date' => null,
-            'trade_date' => null,
-            'atm_strike' => 0,
-            'spot_price' => 0,
-            'message' => $message
-        ];
-    }
-
-    /**
-     * 測試資料庫連接和資料
-     * 可用於除錯
-     */
-    public function testDatabaseConnection(): array
-    {
-        try {
-            $stats = [
-                'options_count' => DB::table('options')->count(),
-                'option_prices_count' => DB::table('option_prices')->count(),
-                'tco_options' => DB::table('options')->where('underlying', 'TXO')->count(),
-                'latest_price_date' => DB::table('option_prices')->max('trade_date'),
-                'expiry_dates' => DB::table('options')
-                    ->where('underlying', 'TXO')
-                    ->distinct()
-                    ->pluck('expiry_date')
-                    ->sort()
-                    ->values()
-                    ->toArray()
-            ];
-
-            return [
-                'success' => true,
-                'stats' => $stats
-            ];
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
-        }
-    }
-
-    /**
-     * 取得當前指數價格
-     * 可以從股票資料表取得加權指數，或使用固定值測試
-     */
-    private function getCurrentSpotPrice(): float
-    {
-        // 嘗試從股票資料表取得大盤指數
-        $indexPrice = DB::table('stocks as s')
-            ->join('stock_prices as sp', 's.id', '=', 'sp.stock_id')
-            ->where('s.symbol', 'TAIEX') // 或其他代表大盤的代碼
-            ->orWhere('s.symbol', '^TWII')
-            ->orderBy('sp.trade_date', 'desc')
-            ->value('sp.close');
-
-        if ($indexPrice) {
-            return floatval($indexPrice);
-        }
-
-        // 如果沒有指數資料，使用預設值或計算平均
-        // 這裡使用 18000 作為預設值（可根據實際情況調整）
-        return 18000.0;
-    }
-
-    /**
-     * 找出最接近現貨價格的履約價 (ATM)
+     * 找出 ATM 履約價
      */
     private function findATMStrike($strikes, $spotPrice): int
     {
@@ -402,9 +287,9 @@ class OptionChainService
     }
 
     /**
-     * 回傳空資料結構
+     * 空回應
      */
-    private function emptyResponse($message = ''): array
+    private function emptyResponse(string $message = ''): array
     {
         return [
             'success' => false,
@@ -416,38 +301,5 @@ class OptionChainService
             'spot_price' => 0,
             'message' => $message
         ];
-    }
-
-    /**
-     * 測試資料庫連接和資料
-     * 可用於除錯
-     */
-    public function testDatabaseConnection(): array
-    {
-        try {
-            $stats = [
-                'options_count' => DB::table('options')->count(),
-                'option_prices_count' => DB::table('option_prices')->count(),
-                'tco_options' => DB::table('options')->where('underlying', 'TXO')->count(),
-                'latest_price_date' => DB::table('option_prices')->max('trade_date'),
-                'expiry_dates' => DB::table('options')
-                    ->where('underlying', 'TXO')
-                    ->distinct()
-                    ->pluck('expiry_date')
-                    ->sort()
-                    ->values()
-                    ->toArray()
-            ];
-
-            return [
-                'success' => true,
-                'stats' => $stats
-            ];
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
-        }
     }
 }

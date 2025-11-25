@@ -259,7 +259,7 @@ export default {
     const atmStrike = ref(0)
     const spotPrice = ref(0)
     const totalStrikes = ref(0)
-    const marketStatus = ref('載入中...')
+    const marketStatus = ref('TAIFEX')
     const debugMode = ref(false) // 可以在開發時設為 true
     const debugInfo = ref({})
 
@@ -279,7 +279,7 @@ export default {
 
         console.log('正在載入選擇權鏈資料...', params)
 
-        const response = await axios.get('/api/options/chain-table', { params })
+        const response = await axios.get('/options/chain-table', { params })
         const result = response.data
 
         if (result.success && result.data) {
@@ -336,7 +336,7 @@ export default {
     // 測試資料庫連線
     const testConnection = async () => {
       try {
-        const response = await axios.get('/api/options/chain-table/test')
+        const response = await axios.get('/debug/data-check')
         console.log('資料庫連線測試結果:', response.data)
         alert('資料庫連線測試結果:\n' + JSON.stringify(response.data, null, 2))
       } catch (error) {
@@ -348,7 +348,7 @@ export default {
     // 取得市場狀態
     const getMarketStatus = async () => {
       try {
-        const response = await axios.get('/api/options/chain-table/market-status')
+        // const response = await axios.get('/api/options/chain-table/market-status')
         if (response.data.success) {
           marketStatus.value = response.data.data.market_status
         }
@@ -409,11 +409,8 @@ export default {
 
     // 生命週期
     onMounted(() => {
+      marketStatus.value = 'TAIFEX'
       loadOptionChain()
-      getMarketStatus()
-
-      // 每 30 秒自動更新市場狀態
-      setInterval(getMarketStatus, 30000)
     })
 
     // 監聽到期日變更
