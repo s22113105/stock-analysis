@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\VolatilityService;
 use App\Models\Stock;
 use App\Models\Option;
+use App\Models\OptionPrice;
 use App\Models\StockPrice;
 use App\Models\Volatility;
 use Illuminate\Http\Request;
@@ -360,6 +361,9 @@ class VolatilityController extends Controller
                     continue;
                 }
 
+                // ⭐ 重要：在排序前先保存當前值（最新計算的波動率）
+                $currentHV = end($hvValues);
+
                 // 排序計算統計值
                 sort($hvValues);
                 $count = count($hvValues);
@@ -367,7 +371,7 @@ class VolatilityController extends Controller
                 $coneData[] = [
                     'period' => $period,
                     'period_label' => $period . '天',
-                    'current' => round(end($hvValues) * 100, 2),
+                    'current' => round($currentHV * 100, 2),  // ✅ 使用排序前保存的當前值
                     'min' => round($hvValues[0] * 100, 2),
                     'max' => round($hvValues[$count - 1] * 100, 2),
                     'p25' => round($hvValues[intval($count * 0.25)] * 100, 2),
@@ -1069,5 +1073,265 @@ class VolatilityController extends Controller
         Cache::forget("volatility:historical:{$stockId}:*");
         Cache::forget("volatility:cone:{$stockId}:*");
         Cache::forget("volatility:garch:{$stockId}:*");
+    }
+
+    /**
+     * 取得市場隱含波動率 (從選擇權價格)
+     *
+     * GET /api/volatility/market-iv/{stockId}
+     * 
+     * 說明：
+     * - 優先從 option_prices 表取得真實 IV
+     * - 如果沒有選擇權資料，則返回 null
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
+     */
+    public function marketIV(Request $request, int $stockId): JsonResponse
+    {
+        try {
+            $stock = Stock::findOrFail($stockId);
+            
+            // 快取 key
+            $cacheKey = "volatility:txo_iv";
+            
+            $cachedData = Cache::get($cacheKey);
+            if ($cachedData && !$request->has('force')) {
+                // 加入股票資訊到快取資料
+                $cachedData['stock'] = [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ];
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedData,
+                    'cached' => true
+                ]);
+            }
+
+            $result = [
+                'stock' => [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ],
+                'has_real_iv' => false,
+                'real_iv' => null,
+                'real_iv_percentage' => null,
+                'iv_source' => null,
+                'txo_iv' => null,
+                'txo_iv_percentage' => null,
+                'data_date' => null,
+                'txo_info' => null,
+            ];
+
+            // 從 TXO 選擇權取得市場 IV
+            // TXO IV 是台灣市場最重要的波動率指標，可作為所有個股的參考
+            $txoIV = $this->getTxoMarketIV();
+            
+            if ($txoIV) {
+                $result['has_real_iv'] = true;
+                $result['txo_iv'] = $txoIV['iv'];
+                $result['txo_iv_percentage'] = round($txoIV['iv'] * 100, 2);
+                $result['real_iv'] = $txoIV['iv'];
+                $result['real_iv_percentage'] = round($txoIV['iv'] * 100, 2);
+                $result['iv_source'] = 'txo';
+                $result['data_date'] = $txoIV['date'];
+                $result['txo_info'] = $txoIV['info'] ?? null;
+            }
+
+            // 儲存快取 (10 分鐘)
+            Cache::put($cacheKey, $result, now()->addMinutes(10));
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的股票'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('取得市場 IV 錯誤', [
+                'stock_id' => $stockId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '取得市場 IV 失敗: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 取得 TXO (台指選擇權) 的市場 IV
+     * 
+     * TXO 是台灣選擇權市場最活躍的商品
+     * 其隱含波動率可作為整體市場波動率的參考指標
+     * 
+     * @return array|null
+     */
+    private function getTxoMarketIV(): ?array
+    {
+        try {
+            // 方法1: 從 option_prices 取得 TXO 的最新 IV
+            $optionPrice = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO')
+                          ->where('expiry_date', '>=', now()->format('Y-m-d'));
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->orderBy('trade_date', 'desc')
+                ->first();
+
+            if ($optionPrice) {
+                $option = $optionPrice->option;
+                return [
+                    'iv' => $optionPrice->implied_volatility,
+                    'date' => $optionPrice->trade_date,
+                    'option_id' => $optionPrice->option_id,
+                    'info' => [
+                        'option_code' => $option->option_code ?? null,
+                        'strike_price' => $option->strike_price ?? null,
+                        'expiry_date' => $option->expiry_date ?? null,
+                        'option_type' => $option->option_type ?? null,
+                    ]
+                ];
+            }
+
+            // 方法2: 計算 ATM 選擇權的平均 IV
+            $atmOptions = $this->getAtmTxoOptions();
+            if (!empty($atmOptions)) {
+                $totalIV = 0;
+                $count = 0;
+                foreach ($atmOptions as $opt) {
+                    $iv = $opt['implied_volatility'] ?? $opt->implied_volatility ?? 0;
+                    if ($iv > 0) {
+                        $totalIV += $iv;
+                        $count++;
+                    }
+                }
+                if ($count > 0) {
+                    return [
+                        'iv' => $totalIV / $count,
+                        'date' => now()->format('Y-m-d'),
+                        'source' => 'atm_average',
+                        'info' => [
+                            'calculation_method' => 'ATM 選擇權平均',
+                            'sample_count' => $count,
+                        ]
+                    ];
+                }
+            }
+
+            // 方法3: 取得任何有 IV 的 TXO 資料
+            $anyTxoPrice = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO');
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->orderBy('trade_date', 'desc')
+                ->first();
+
+            if ($anyTxoPrice) {
+                return [
+                    'iv' => $anyTxoPrice->implied_volatility,
+                    'date' => $anyTxoPrice->trade_date,
+                    'option_id' => $anyTxoPrice->option_id,
+                    'info' => [
+                        'note' => '歷史資料（可能已到期）',
+                    ]
+                ];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('取得 TXO IV 失敗', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * 取得 ATM TXO 選擇權
+     */
+    private function getAtmTxoOptions(): array
+    {
+        try {
+            // 取得最近到期的 TXO 選擇權
+            $nearestExpiry = Option::where('underlying', 'TXO')
+                ->where('expiry_date', '>=', now()->format('Y-m-d'))
+                ->orderBy('expiry_date')
+                ->value('expiry_date');
+
+            if (!$nearestExpiry) {
+                return [];
+            }
+
+            // 取得該到期日的選擇權價格
+            return OptionPrice::whereHas('option', function ($query) use ($nearestExpiry) {
+                    $query->where('underlying', 'TXO')
+                          ->where('expiry_date', $nearestExpiry);
+                })
+                ->whereNotNull('implied_volatility')
+                ->orderBy('trade_date', 'desc')
+                ->limit(10)
+                ->get()
+                ->toArray();
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * 取得個股選擇權的 IV
+     * 
+     * @param int $stockId
+     * @return array|null
+     */
+    private function getStockOptionIV(int $stockId): ?array
+    {
+        try {
+            $stock = Stock::find($stockId);
+            if (!$stock) {
+                return null;
+            }
+
+            // 查詢該股票的選擇權
+            $optionPrice = OptionPrice::whereHas('option', function ($query) use ($stock) {
+                    $query->where('underlying', $stock->symbol)
+                          ->where('expiry_date', '>=', now()->format('Y-m-d'));
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->orderBy('trade_date', 'desc')
+                ->first();
+
+            if ($optionPrice) {
+                $option = $optionPrice->option;
+                return [
+                    'iv' => $optionPrice->implied_volatility,
+                    'date' => $optionPrice->trade_date,
+                    'option_info' => [
+                        'option_code' => $option->option_code,
+                        'strike_price' => $option->strike_price,
+                        'expiry_date' => $option->expiry_date,
+                        'option_type' => $option->option_type,
+                    ]
+                ];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('取得個股選擇權 IV 失敗', [
+                'stock_id' => $stockId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 }

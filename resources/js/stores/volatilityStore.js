@@ -20,6 +20,7 @@ export const useVolatilityStore = defineStore('volatility', {
         historicalVolatility: null,     // 歷史波動率 (HV)
         impliedVolatility: null,        // 隱含波動率 (IV)
         realizedVolatility: null,       // 實現波動率
+        marketIV: null,                 // 市場隱含波動率 (從選擇權)
         
         // 波動率錐資料
         volatilityCone: [],
@@ -46,6 +47,7 @@ export const useVolatilityStore = defineStore('volatility', {
         loading: {
             historical: false,
             implied: false,
+            marketIV: false,
             cone: false,
             surface: false,
             skew: false,
@@ -58,6 +60,7 @@ export const useVolatilityStore = defineStore('volatility', {
         errors: {
             historical: null,
             implied: null,
+            marketIV: null,
             cone: null,
             surface: null,
             skew: null,
@@ -121,10 +124,12 @@ export const useVolatilityStore = defineStore('volatility', {
         },
 
         /**
-         * 是否有任何錯誤
+         * 是否有任何關鍵錯誤 (排除非關鍵的 marketIV)
          */
         hasError: (state) => {
-            return Object.values(state.errors).some(v => v !== null)
+            // marketIV 是非關鍵功能，不需要顯示錯誤
+            const criticalErrors = ['historical', 'implied', 'cone', 'surface', 'skew', 'garch', 'trend']
+            return criticalErrors.some(key => state.errors[key] !== null)
         },
 
         /**
@@ -196,6 +201,7 @@ export const useVolatilityStore = defineStore('volatility', {
             this.historicalVolatility = null
             this.impliedVolatility = null
             this.realizedVolatility = null
+            this.marketIV = null
             this.volatilityCone = []
             this.volatilitySurface = null
             this.volatilitySkew = null
@@ -205,6 +211,7 @@ export const useVolatilityStore = defineStore('volatility', {
             this.errors = {
                 historical: null,
                 implied: null,
+                marketIV: null,
                 cone: null,
                 surface: null,
                 skew: null,
@@ -386,6 +393,34 @@ export const useVolatilityStore = defineStore('volatility', {
         },
 
         /**
+         * 取得市場隱含波動率 (從選擇權價格)
+         * GET /api/volatility/market-iv/{stockId}
+         */
+        async fetchMarketIV(stockId) {
+            this.loading.marketIV = true
+            this.errors.marketIV = null
+            
+            try {
+                const response = await axios.get(`volatility/market-iv/${stockId}`)
+                
+                if (response.data.success) {
+                    this.marketIV = response.data.data
+                    return response.data.data
+                } else {
+                    throw new Error(response.data.message || '取得市場 IV 失敗')
+                }
+            } catch (error) {
+                // 市場 IV 取得失敗不影響其他功能，只記錄錯誤
+                this.errors.marketIV = error.response?.data?.message || error.message
+                console.warn('取得市場 IV 失敗 (非關鍵錯誤):', error.message)
+                this.marketIV = null
+                // 不拋出錯誤，讓其他功能繼續
+            } finally {
+                this.loading.marketIV = false
+            }
+        },
+
+        /**
          * 計算多週期波動率統計
          */
         async fetchMultiPeriodStats(stockId) {
@@ -419,7 +454,7 @@ export const useVolatilityStore = defineStore('volatility', {
          * 批次載入所有波動率資料
          */
         async loadAllVolatilityData(stockId, options = {}) {
-            const { period = 30, includeGarch = true, includeSurface = false } = options
+            const { period = 30, includeGarch = true, includeSurface = false, includeMarketIV = true } = options
             
             this.loading.batch = true
             this.currentStockId = stockId
@@ -436,6 +471,11 @@ export const useVolatilityStore = defineStore('volatility', {
                     promises.push(this.fetchGarchForecast(stockId))
                 }
                 
+                // 嘗試取得市場 IV (非關鍵，失敗不影響其他功能)
+                if (includeMarketIV) {
+                    promises.push(this.fetchMarketIV(stockId))
+                }
+                
                 if (includeSurface) {
                     promises.push(this.fetchVolatilitySurface(stockId))
                 }
@@ -448,7 +488,8 @@ export const useVolatilityStore = defineStore('volatility', {
                     historicalVolatility: this.historicalVolatility,
                     volatilityCone: this.volatilityCone,
                     volatilityStats: this.volatilityStats,
-                    garchForecast: this.garchForecast
+                    garchForecast: this.garchForecast,
+                    marketIV: this.marketIV
                 }
             } catch (error) {
                 console.error('批次載入波動率資料失敗:', error)

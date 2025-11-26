@@ -17,7 +17,7 @@
           <v-card-text>
             <v-row align="center">
               <!-- 股票代碼搜尋 -->
-              <v-col cols="12" md="3">
+              <v-col cols="12" md="4">
                 <v-autocomplete
                   v-model="selectedStock"
                   :items="stockList"
@@ -72,19 +72,8 @@
                 ></v-select>
               </v-col>
 
-              <!-- 波動率類型 -->
-              <v-col cols="12" md="2">
-                <v-select
-                  v-model="selectedVolatilityType"
-                  :items="volatilityTypeOptions"
-                  label="波動率類型"
-                  density="compact"
-                  hide-details
-                ></v-select>
-              </v-col>
-
               <!-- 計算按鈕 -->
-              <v-col cols="12" md="3">
+              <v-col cols="12" md="4" class="d-flex align-center">
                 <v-btn
                   color="primary"
                   :loading="volatilityStore.loading.batch"
@@ -141,65 +130,142 @@
       </v-col>
     </v-row>
 
+    <!-- 注意：TXO 波動率無資料不顯示錯誤提示，因為卡片已顯示「無資料」 -->
+
     <!-- 主要內容區域 -->
     <template v-if="!volatilityStore.loading.batch && volatilityStore.historicalVolatility">
       <!-- 波動率統計卡片 -->
       <v-row class="mt-4">
-        <!-- 當前 HV -->
+        <!-- 當前 HV (歷史波動率) -->
         <v-col cols="12" md="3">
           <v-card color="primary" dark elevation="3">
             <v-card-text>
-              <div class="text-subtitle-2 text-white-50">當前 HV</div>
+              <div class="d-flex justify-space-between align-center">
+                <div class="text-subtitle-2 text-white-50">歷史波動率 (HV)</div>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">mdi-information-outline</v-icon>
+                  </template>
+                  <span>從股票收盤價計算的波動率</span>
+                </v-tooltip>
+              </div>
               <div class="text-h4 font-weight-bold">
                 {{ displayHV }}%
               </div>
               <div class="text-caption text-white-50">
-                {{ selectedPeriod }} 天歷史波動率
+                <v-icon size="x-small">mdi-chart-line</v-icon>
+                {{ selectedPeriod }} 天 | 資料來源: 股價
               </div>
             </v-card-text>
           </v-card>
         </v-col>
 
-        <!-- 當前 IV -->
+        <!-- GARCH 預測波動率 -->
         <v-col cols="12" md="3">
-          <v-card color="success" dark elevation="3">
+          <v-card color="deep-purple" dark elevation="3">
             <v-card-text>
-              <div class="text-subtitle-2 text-white-50">當前 IV</div>
+              <div class="d-flex justify-space-between align-center">
+                <div class="text-subtitle-2 text-white-50">GARCH 預測</div>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">mdi-information-outline</v-icon>
+                  </template>
+                  <span>使用 GARCH(1,1) 模型預測的波動率</span>
+                </v-tooltip>
+              </div>
               <div class="text-h4 font-weight-bold">
-                {{ displayIV }}%
+                {{ displayGarchVolatility }}%
               </div>
               <div class="text-caption text-white-50">
-                選擇權隱含波動率
+                <v-icon size="x-small">mdi-robot</v-icon>
+                模型預測 | σ²(t) = ω + αε² + βσ²
               </div>
             </v-card-text>
           </v-card>
         </v-col>
 
-        <!-- IV/HV 比率 -->
+        <!-- TXO 波動率 (台指選擇權隱含波動率) -->
+        <v-col cols="12" md="3">
+          <v-card :color="hasRealIV ? 'teal' : 'grey'" dark elevation="3">
+            <v-card-text>
+              <div class="d-flex justify-space-between align-center">
+                <div class="text-subtitle-2 text-white-50">TXO 波動率</div>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">mdi-information-outline</v-icon>
+                  </template>
+                  <span>{{ hasRealIV ? '台指選擇權 (TXO) 的隱含波動率，為台灣市場波動率指標' : '請先執行 TXO 爬蟲取得資料' }}</span>
+                </v-tooltip>
+              </div>
+              <div class="text-h4 font-weight-bold">
+                <template v-if="displayMarketIV !== '-'">{{ displayMarketIV }}%</template>
+                <template v-else>-%</template>
+              </div>
+              <div class="text-caption text-white-50">
+                <v-icon size="x-small">{{ hasRealIV ? 'mdi-check-circle' : 'mdi-alert-circle' }}</v-icon>
+                {{ ivSourceText }}
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
+
+        <!-- 波動率等級 / IV-HV 比較 -->
         <v-col cols="12" md="3">
           <v-card :color="ivHvAnalysis.color" dark elevation="3">
             <v-card-text>
-              <div class="text-subtitle-2 text-white-50">IV / HV 比率</div>
+              <div class="d-flex justify-space-between align-center">
+                <div class="text-subtitle-2 text-white-50">GARCH/HV 比率</div>
+                <v-tooltip location="top">
+                  <template v-slot:activator="{ props }">
+                    <v-icon v-bind="props" size="small">mdi-information-outline</v-icon>
+                  </template>
+                  <span>GARCH預測 vs 歷史波動率的比較</span>
+                </v-tooltip>
+              </div>
               <div class="text-h4 font-weight-bold">
                 {{ displayIvHvRatio }}
               </div>
               <div class="text-caption text-white-50">
+                <v-icon size="x-small">mdi-scale-balance</v-icon>
                 {{ ivHvAnalysis.text }}
               </div>
             </v-card-text>
           </v-card>
         </v-col>
+      </v-row>
 
-        <!-- 波動率等級 -->
-        <v-col cols="12" md="3">
-          <v-card color="info" dark elevation="3">
-            <v-card-text>
-              <div class="text-subtitle-2 text-white-50">波動率等級</div>
-              <div class="text-h4 font-weight-bold">
-                {{ displayVolatilityRank }}%
+      <!-- 波動率等級 (獨立一行) -->
+      <v-row class="mt-2">
+        <v-col cols="12">
+          <v-card elevation="2">
+            <v-card-text class="d-flex align-center">
+              <div class="mr-4">
+                <div class="text-subtitle-2 text-grey">波動率等級 (歷史百分位)</div>
+                <div class="text-h5 font-weight-bold" :class="volatilityRankColor">
+                  {{ displayVolatilityRank }}%
+                </div>
               </div>
-              <div class="text-caption text-white-50">
-                歷史百分位數
+              <v-progress-linear
+                :model-value="parseFloat(displayVolatilityRank) || 0"
+                :color="volatilityRankColor"
+                height="20"
+                rounded
+                class="flex-grow-1"
+              >
+                <template v-slot:default>
+                  <span class="text-caption white--text">
+                    當前波動率高於歷史 {{ displayVolatilityRank }}% 的時間
+                  </span>
+                </template>
+              </v-progress-linear>
+              <div class="ml-4 text-right">
+                <v-chip
+                  :color="volatilityRankColor"
+                  size="small"
+                  label
+                >
+                  {{ volatilityRankText }}
+                </v-chip>
               </div>
             </v-card-text>
           </v-card>
@@ -488,7 +554,6 @@ export default {
     // 篩選選項
     const selectedPeriod = ref(30)
     const selectedMethod = ref('Close-to-Close')
-    const selectedVolatilityType = ref('歷史波動率 (HV)')
 
     const periodOptions = [
       { text: '10 天', value: 10 },
@@ -506,12 +571,6 @@ export default {
       'Garman-Klass',
       'Rogers-Satchell',
       'Yang-Zhang'
-    ]
-
-    const volatilityTypeOptions = [
-      '歷史波動率 (HV)',
-      '隱含波動率 (IV)',
-      'GARCH 模型'
     ]
 
     // 圖表參考
@@ -535,31 +594,106 @@ export default {
       return volatilityStore.currentHV || '-'
     })
 
-    const displayIV = computed(() => {
-      // 使用 GARCH 當前波動率作為 IV 的近似值 (如果沒有真實 IV)
-      if (volatilityStore.currentIV) {
-        return volatilityStore.currentIV
-      }
+    // GARCH 預測波動率
+    const displayGarchVolatility = computed(() => {
       if (volatilityStore.garchForecast?.current_volatility) {
         return (volatilityStore.garchForecast.current_volatility * 100).toFixed(2)
       }
       return '-'
     })
 
+    // TXO 波動率 (台指選擇權隱含波動率)
+    const displayMarketIV = computed(() => {
+      // 使用 TXO 隱含波動率
+      if (volatilityStore.marketIV?.has_real_iv && volatilityStore.marketIV?.real_iv_percentage) {
+        return volatilityStore.marketIV.real_iv_percentage
+      }
+      // 備用：TXO 參考值
+      if (volatilityStore.marketIV?.txo_iv_percentage) {
+        return volatilityStore.marketIV.txo_iv_percentage
+      }
+      // 沒有資料
+      return '-'
+    })
+
+    // 是否有 TXO IV 資料
+    const hasRealIV = computed(() => {
+      return volatilityStore.marketIV?.has_real_iv || false
+    })
+
+    // IV 資料來源文字
+    const ivSourceText = computed(() => {
+      if (!volatilityStore.marketIV) {
+        return '請執行爬蟲'
+      }
+      const source = volatilityStore.marketIV.iv_source
+      const dataDate = volatilityStore.marketIV.data_date
+      
+      switch (source) {
+        case 'txo':
+          return dataDate ? `TXO | ${dataDate}` : 'TXO 選擇權'
+        case 'atm_average':
+          return 'TXO ATM 平均'
+        case 'txo_reference':
+          return 'TXO 參考值'
+        default:
+          if (volatilityStore.marketIV.txo_iv_percentage) {
+            return 'TXO 參考值'
+          }
+          return '無 TXO 資料'
+      }
+    })
+
+    // 保留舊的 displayIV 用於向後兼容
+    const displayIV = computed(() => {
+      // 優先使用真實市場 IV
+      if (hasRealIV.value && displayMarketIV.value !== '-') {
+        return displayMarketIV.value
+      }
+      // 其次使用 GARCH 預測
+      if (displayGarchVolatility.value !== '-') {
+        return displayGarchVolatility.value
+      }
+      return '-'
+    })
+
     const displayIvHvRatio = computed(() => {
       const hv = parseFloat(displayHV.value)
-      const iv = parseFloat(displayIV.value)
-      if (isNaN(hv) || isNaN(iv) || hv === 0) return '-'
-      return (iv / hv).toFixed(2)
+      // 使用 GARCH 預測來計算比率（因為更可靠）
+      const garch = parseFloat(displayGarchVolatility.value)
+      if (isNaN(hv) || isNaN(garch) || hv === 0) return '-'
+      return (garch / hv).toFixed(2)
     })
 
     const ivHvAnalysis = computed(() => {
       const ratio = parseFloat(displayIvHvRatio.value)
       if (isNaN(ratio)) return { color: 'grey', text: '資料不足' }
       
-      if (ratio < 0.9) return { color: 'success', text: 'IV 低估' }
-      if (ratio > 1.1) return { color: 'error', text: 'IV 高估' }
-      return { color: 'warning', text: 'IV 合理' }
+      if (ratio < 0.9) return { color: 'success', text: '預測偏低' }
+      if (ratio > 1.1) return { color: 'error', text: '預測偏高' }
+      return { color: 'warning', text: '預測合理' }
+    })
+
+    // 波動率等級顏色
+    const volatilityRankColor = computed(() => {
+      const rank = parseFloat(displayVolatilityRank.value)
+      if (isNaN(rank)) return 'grey'
+      if (rank < 20) return 'success'
+      if (rank < 40) return 'light-green'
+      if (rank < 60) return 'warning'
+      if (rank < 80) return 'orange'
+      return 'error'
+    })
+
+    // 波動率等級文字
+    const volatilityRankText = computed(() => {
+      const rank = parseFloat(displayVolatilityRank.value)
+      if (isNaN(rank)) return '無資料'
+      if (rank < 20) return '極低'
+      if (rank < 40) return '偏低'
+      if (rank < 60) return '正常'
+      if (rank < 80) return '偏高'
+      return '極高'
     })
 
     const displayVolatilityRank = computed(() => {
@@ -680,6 +814,7 @@ export default {
       volatilityStore.errors = {
         historical: null,
         implied: null,
+        marketIV: null,
         cone: null,
         surface: null,
         skew: null,
@@ -964,12 +1099,10 @@ export default {
       loadingStocks,
       selectedPeriod,
       selectedMethod,
-      selectedVolatilityType,
       
       // 選項
       periodOptions,
       methodOptions,
-      volatilityTypeOptions,
       
       // 圖表參考
       volatilityTrendChart,
@@ -982,9 +1115,15 @@ export default {
       // 計算屬性
       displayHV,
       displayIV,
+      displayGarchVolatility,
+      displayMarketIV,
+      hasRealIV,
+      ivSourceText,
       displayIvHvRatio,
       ivHvAnalysis,
       displayVolatilityRank,
+      volatilityRankColor,
+      volatilityRankText,
       tradingRecommendation,
       formattedVolatilityStats,
       formatLastUpdated,

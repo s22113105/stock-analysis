@@ -492,6 +492,9 @@ class VolatilityService
                 continue;
             }
 
+            // ⭐ 重要：在排序前先保存當前值（最新計算的波動率）
+            $currentHV = end($hvValues);
+
             // 排序計算統計值
             sort($hvValues);
             $count = count($hvValues);
@@ -499,7 +502,7 @@ class VolatilityService
             $coneData[] = [
                 'period' => $period,
                 'period_label' => $period . '天',
-                'current' => round(end($hvValues) * 100, 2),
+                'current' => round($currentHV * 100, 2),  // ✅ 使用排序前保存的當前值
                 'min' => round($hvValues[0] * 100, 2),
                 'max' => round($hvValues[$count - 1] * 100, 2),
                 'p10' => round($hvValues[intval($count * 0.1)] * 100, 2),
