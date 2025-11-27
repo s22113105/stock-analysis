@@ -15,7 +15,7 @@ services:
       - stock-analysis-network
     depends_on:
       db:
-        condition: service_healthy # 仍需等待 db 服務健康
+        condition: service_healthy
       redis:
         condition: service_started
     environment:
@@ -50,24 +50,19 @@ services:
     ports:
       - "3307:3306"
     environment:
-      # 啟用空密碼，允許 root 用戶不用密碼登入
       MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
-
-      # 資料庫名稱
       MYSQL_DATABASE: ${DB_DATABASE}
-
     volumes:
       - mysql_data:/var/lib/mysql
       - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
     networks:
       - stock-analysis-network
     healthcheck:
-      # 修正 Healthcheck: 使用 --password="" 來明確指示空密碼
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "--password="]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s # 給予足夠的啟動時間
+      start_period: 30s
 
   # Redis
   redis:
@@ -93,7 +88,6 @@ services:
       - stock-analysis-network
     command: sh -c "npm install && npm run build"
 
-
   # phpMyAdmin
   phpmyadmin:
     image: phpmyadmin:latest
@@ -105,14 +99,14 @@ services:
       PMA_HOST: db
       PMA_PORT: 3306
       PMA_USER: root
-      PMA_PASSWORD: '' # 設置 phpMyAdmin 的密碼為空
+      PMA_PASSWORD: ''
       UPLOAD_LIMIT: 50M
     networks:
       - stock-analysis-network
     depends_on:
       - db
 
-  # ⭐ Horizon Worker
+  # Horizon Worker
   horizon:
     build:
       context: .
@@ -167,6 +161,23 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+
+  # ngrok - 外網穿透
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: stock-analysis-ngrok
+    restart: unless-stopped
+    command:
+      - "http"
+      - "http://nginx:80"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    networks:
+      - stock-analysis-network
+    depends_on:
+      - nginx
 
 networks:
   stock-analysis-network:

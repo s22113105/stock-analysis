@@ -100,12 +100,13 @@ Route::prefix('black-scholes')->group(function () {
 Route::prefix('volatility')->group(function () {
     Route::get('/historical/{stock_id}', [VolatilityController::class, 'historical']);
     Route::get('/implied/{option_id}', [VolatilityController::class, 'implied']);
+    Route::get('/market-iv/{stockId}', [VolatilityController::class, 'marketIV']);  // ← 加入這行
 
     // [修正] 補上缺失的路由，並移除不存在的 compare
-    Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);       // 波動率錐
-    Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']); // 波動率曲面 (注意: Controller 目前預期 ID)
-    Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);       // 波動率偏斜
-    Route::get('/garch/{stock_id}', [VolatilityController::class, 'garch']);     // GARCH 模型
+    Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);
+    Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']);
+    Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);
+    Route::get('/garch/{stock_id}', [VolatilityController::class, 'garch']);
 
     // 手動觸發計算
     Route::post('/calculate', [VolatilityController::class, 'calculate']);

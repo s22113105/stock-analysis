@@ -1179,13 +1179,14 @@ class VolatilityController extends Controller
     private function getTxoMarketIV(): ?array
     {
         try {
-            // 方法1: 從 option_prices 取得 TXO 的最新 IV
+            // 優先取得最新有 IV 的 TXO 資料（不限制到期日）
+            // 因為選擇權可能已過期，但 IV 資料仍然有參考價值
             $optionPrice = OptionPrice::whereHas('option', function ($query) {
-                    $query->where('underlying', 'TXO')
-                          ->where('expiry_date', '>=', now()->format('Y-m-d'));
+                    $query->where('underlying', 'TXO');
                 })
                 ->whereNotNull('implied_volatility')
                 ->where('implied_volatility', '>', 0)
+                ->where('implied_volatility', '<', 3) // 排除異常值 (300% 以上)
                 ->orderBy('trade_date', 'desc')
                 ->first();
 
@@ -1204,54 +1205,75 @@ class VolatilityController extends Controller
                 ];
             }
 
-            // 方法2: 計算 ATM 選擇權的平均 IV
-            $atmOptions = $this->getAtmTxoOptions();
-            if (!empty($atmOptions)) {
-                $totalIV = 0;
-                $count = 0;
-                foreach ($atmOptions as $opt) {
-                    $iv = $opt['implied_volatility'] ?? $opt->implied_volatility ?? 0;
-                    if ($iv > 0) {
-                        $totalIV += $iv;
-                        $count++;
-                    }
-                }
-                if ($count > 0) {
-                    return [
-                        'iv' => $totalIV / $count,
-                        'date' => now()->format('Y-m-d'),
-                        'source' => 'atm_average',
-                        'info' => [
-                            'calculation_method' => 'ATM 選擇權平均',
-                            'sample_count' => $count,
-                        ]
-                    ];
-                }
+            // 如果找不到，嘗試計算 ATM 選擇權的平均 IV
+            $atmIV = $this->calculateAtmAverageIV();
+            if ($atmIV) {
+                return $atmIV;
             }
 
-            // 方法3: 取得任何有 IV 的 TXO 資料
-            $anyTxoPrice = OptionPrice::whereHas('option', function ($query) {
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('取得 TXO IV 失敗', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * 計算 ATM (價平) 選擇權的平均 IV
+     * ATM 選擇權的 IV 最能代表市場對波動率的預期
+     */
+    private function calculateAtmAverageIV(): ?array
+    {
+        try {
+            // 取得最新的交易日期
+            $latestDate = OptionPrice::whereHas('option', function ($query) {
                     $query->where('underlying', 'TXO');
                 })
                 ->whereNotNull('implied_volatility')
                 ->where('implied_volatility', '>', 0)
-                ->orderBy('trade_date', 'desc')
-                ->first();
+                ->max('trade_date');
 
-            if ($anyTxoPrice) {
+            if (!$latestDate) {
+                return null;
+            }
+
+            // 取得該日期所有有 IV 的選擇權
+            $optionPrices = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO');
+                })
+                ->where('trade_date', $latestDate)
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0.05)  // 排除過低的 IV (5% 以下)
+                ->where('implied_volatility', '<', 1.5)   // 排除過高的 IV (150% 以上)
+                ->get();
+
+            if ($optionPrices->isEmpty()) {
+                return null;
+            }
+
+            // 計算平均 IV
+            $totalIV = 0;
+            $count = 0;
+            foreach ($optionPrices as $price) {
+                $totalIV += $price->implied_volatility;
+                $count++;
+            }
+
+            if ($count > 0) {
                 return [
-                    'iv' => $anyTxoPrice->implied_volatility,
-                    'date' => $anyTxoPrice->trade_date,
-                    'option_id' => $anyTxoPrice->option_id,
+                    'iv' => $totalIV / $count,
+                    'date' => $latestDate,
+                    'source' => 'atm_average',
                     'info' => [
-                        'note' => '歷史資料（可能已到期）',
+                        'calculation_method' => 'ATM 選擇權平均',
+                        'sample_count' => $count,
                     ]
                 ];
             }
 
             return null;
         } catch (\Exception $e) {
-            Log::warning('取得 TXO IV 失敗', ['error' => $e->getMessage()]);
+            Log::warning('計算 ATM 平均 IV 失敗', ['error' => $e->getMessage()]);
             return null;
         }
     }
