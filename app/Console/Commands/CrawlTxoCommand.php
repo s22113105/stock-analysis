@@ -8,6 +8,7 @@ use App\Models\OptionPrice;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 /**
@@ -305,6 +306,14 @@ class CrawlTxoCommand extends Command
         $progressBar = $this->output->createProgressBar($parsedData->count());
         $progressBar->start();
 
+        // 預先檢查資料表有哪些欄位（避免在迴圈中重複查詢）
+        $columns = Schema::getColumnListing('option_prices');
+        $hasSettlement = in_array('settlement', $columns);
+        $hasDelta = in_array('delta', $columns);
+        $hasGamma = in_array('gamma', $columns);
+        $hasTheta = in_array('theta', $columns);
+        $hasVega = in_array('vega', $columns);
+
         DB::beginTransaction();
 
         try {
@@ -336,21 +345,38 @@ class CrawlTxoCommand extends Command
                     'option_id' => $option->id,
                     'trade_date' => $data['trade_date'],
                 ];
-
+                
                 $priceValues = [
                     'open' => $data['open'],
                     'high' => $data['high'],
                     'low' => $data['low'],
-                    'close' => $data['close'],
-                    'settlement' => $data['settlement'],
                     'volume' => $data['volume'],
                     'open_interest' => $data['open_interest'],
                     'implied_volatility' => $data['implied_volatility'],
-                    'delta' => $data['delta'],
-                    'gamma' => $data['gamma'],
-                    'theta' => $data['theta'],
-                    'vega' => $data['vega'],
                 ];
+
+                // 價格欄位：優先用結算價，如果 close 為空則用結算價填入
+                $closePrice = $data['close'] > 0 ? $data['close'] : $data['settlement'];
+                $priceValues['close'] = $closePrice;
+
+                // 如果有 settlement 欄位就寫入
+                if ($hasSettlement) {
+                    $priceValues['settlement'] = $data['settlement'];
+                }
+
+                // Greeks (如果有欄位)
+                if ($hasDelta) {
+                    $priceValues['delta'] = $data['delta'];
+                }
+                if ($hasGamma) {
+                    $priceValues['gamma'] = $data['gamma'];
+                }
+                if ($hasTheta) {
+                    $priceValues['theta'] = $data['theta'];
+                }
+                if ($hasVega) {
+                    $priceValues['vega'] = $data['vega'];
+                }
 
                 $price = OptionPrice::updateOrCreate($priceData, $priceValues);
 
