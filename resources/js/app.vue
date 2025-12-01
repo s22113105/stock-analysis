@@ -253,21 +253,21 @@ export default {
         icon: 'mdi-crystal-ball',
         to: '/predictions'
       },
-      {
-        title: '策略回測',
-        icon: 'mdi-history',
-        to: '/backtest'
-      },
-      {
-        title: '即時監控',
-        icon: 'mdi-monitor-eye',
-        to: '/realtime'
-      },
-      {
-        title: '報表分析',
-        icon: 'mdi-file-chart',
-        to: '/reports'
-      },
+    //   {
+    //     title: '策略回測',
+    //     icon: 'mdi-history',
+    //     to: '/backtest'
+    //   },
+    //   {
+    //     title: '即時監控',
+    //     icon: 'mdi-monitor-eye',
+    //     to: '/realtime'
+    //   },
+    //   {
+    //     title: '報表分析',
+    //     icon: 'mdi-file-chart',
+    //     to: '/reports'
+    //   },
       {
         title: '系統設定',
         icon: 'mdi-cog',
@@ -374,49 +374,49 @@ export default {
     // 確認登出
     const confirmLogout = async () => {
       loggingOut.value = true
-      
+
       try {
         // 調用後端登出 API
         // ✅ 修正:移除 /api 前綴,因為 baseURL 已經是 /api
         await axios.post('auth/logout')
-        
+
         // 清除本地存儲
         localStorage.removeItem('authToken')
         localStorage.removeItem('user')
-        
+
         // 移除 axios 預設 header
         delete axios.defaults.headers.common['Authorization']
-        
+
         // 關閉對話框
         showLogoutDialog.value = false
-        
+
         // 顯示成功訊息
         snackbarText.value = '已成功登出'
         snackbarColor.value = 'success'
         showSnackbar.value = true
-        
+
         // 延遲導向登入頁
         setTimeout(() => {
           router.push('/login')
         }, 500)
-        
+
       } catch (error) {
         console.error('登出失敗:', error)
-        
+
         // 即使 API 失敗,也清除本地資料並導向登入頁
         localStorage.removeItem('authToken')
         localStorage.removeItem('user')
         delete axios.defaults.headers.common['Authorization']
-        
+
         showLogoutDialog.value = false
         snackbarText.value = '登出時發生錯誤,但已清除本地資料'
         snackbarColor.value = 'warning'
         showSnackbar.value = true
-        
+
         setTimeout(() => {
           router.push('/login')
         }, 500)
-        
+
       } finally {
         loggingOut.value = false
       }
