@@ -7,13 +7,17 @@ use Illuminate\Support\Facades\Route;
  * ============================================
  * API Routes - Stock_Analysis System
  * ============================================
+ * 
+ * @version 2.0
+ * @updated 2024-12
+ * - 新增 Black-Scholes 進階分析 API
  */
 
 // 導入所有需要的控制器
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\OptionController;
-use App\Http\Controllers\Api\OptionChainController; // [新功能] 選擇權 T 字報價表控制器
+use App\Http\Controllers\Api\OptionChainController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\BlackScholesController;
 use App\Http\Controllers\VolatilityController;
@@ -87,12 +91,24 @@ Route::prefix('options')->group(function () {
 });
 
 // ==========================================
-// Black-Scholes API
+// Black-Scholes API (選擇權定價模型)
 // ==========================================
 Route::prefix('black-scholes')->group(function () {
+    // 基本計算
     Route::post('/calculate', [BlackScholesController::class, 'calculate']);
     Route::post('/batch', [BlackScholesController::class, 'batchCalculate']);
-    Route::post('/implied-volatility', [BlackScholesController::class, 'impliedVolatility']);  // ← 新增這行
+    Route::post('/implied-volatility', [BlackScholesController::class, 'impliedVolatility']);
+    
+    // [新增] 進階分析功能
+    Route::post('/time-decay', [BlackScholesController::class, 'timeDecay']);           // 時間衰減分析
+    Route::post('/payoff', [BlackScholesController::class, 'payoff']);                   // 到期損益計算
+    Route::post('/batch-prices', [BlackScholesController::class, 'batchPrices']);        // 批次價格計算
+    
+    // [新增] 波動率相關
+    Route::get('/volatility-smile', [BlackScholesController::class, 'volatilitySmile']); // 波動率微笑
+    
+    // [新增] 批次 Greeks 計算
+    Route::post('/batch-greeks', [BlackScholesController::class, 'batchGreeks']);        // 批次 Greeks
 });
 
 // ==========================================
@@ -101,9 +117,9 @@ Route::prefix('black-scholes')->group(function () {
 Route::prefix('volatility')->group(function () {
     Route::get('/historical/{stock_id}', [VolatilityController::class, 'historical']);
     Route::get('/implied/{option_id}', [VolatilityController::class, 'implied']);
-    Route::get('/market-iv/{stockId}', [VolatilityController::class, 'marketIV']);  // ← 加入這行
+    Route::get('/market-iv/{stockId}', [VolatilityController::class, 'marketIV']);
 
-    // [修正] 補上缺失的路由，並移除不存在的 compare
+    // 進階波動率分析
     Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);
     Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']);
     Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);

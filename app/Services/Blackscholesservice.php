@@ -11,6 +11,14 @@ use Illuminate\Support\Facades\Log;
  * - 計算歐式選擇權理論價格
  * - 計算 Greeks (Delta, Gamma, Theta, Vega, Rho)
  * - 計算隱含波動率 (Implied Volatility)
+ * - 到期損益計算
+ * - Greeks 時間衰減分析
+ * 
+ * @version 2.0 改進版
+ * - 調整 Moneyness 閾值至 0.5%
+ * - 增加 Greeks 精度
+ * - 新增到期損益計算
+ * - 新增時間衰減分析
  */
 class BlackScholesService
 {
@@ -91,15 +99,17 @@ class BlackScholesService
     public function calculateDelta(float $d1, string $optionType = 'call'): float
     {
         if (strtolower($optionType) === 'call') {
-            return round($this->normalCDF($d1), 5);
+            return round($this->normalCDF($d1), 6); // 改進：提高精度至 6 位
         } else {
-            return round($this->normalCDF($d1) - 1, 5);
+            return round($this->normalCDF($d1) - 1, 6);
         }
     }
 
     /**
      * 計算 Gamma
      * Gamma = N'(d1) / (S * σ * sqrt(T))
+     * 
+     * 改進：提高精度至 6 位小數，對 Gamma Scalping 策略很重要
      */
     public function calculateGamma(
         float $spotPrice,
@@ -110,11 +120,14 @@ class BlackScholesService
         $nPrime = $this->normalPDF($d1);
         $gamma = $nPrime / ($spotPrice * $volatility * sqrt($timeToExpiry));
         
-        return round($gamma, 5);
+        return round($gamma, 6); // 改進：從 5 位提升至 6 位
     }
 
     /**
      * 計算 Theta (每日時間價值衰減)
+     * 
+     * Call Theta = -[S * N'(d1) * σ / (2 * sqrt(T))] - r * K * e^(-rT) * N(d2)
+     * Put Theta = -[S * N'(d1) * σ / (2 * sqrt(T))] + r * K * e^(-rT) * N(-d2)
      */
     public function calculateTheta(
         float $spotPrice,
@@ -126,37 +139,52 @@ class BlackScholesService
         float $volatility,
         string $optionType = 'call'
     ): float {
-        $nPrimeD1 = $this->normalPDF($d1);
+        $nPrime = $this->normalPDF($d1);
         $sqrtT = sqrt($timeToExpiry);
-
+        
+        // 第一項：時間價值衰減 (兩種選擇權相同)
+        $term1 = -($spotPrice * $nPrime * $volatility) / (2 * $sqrtT);
+        
         if (strtolower($optionType) === 'call') {
-            $theta = (-$spotPrice * $nPrimeD1 * $volatility / (2 * $sqrtT))
-                   - $riskFreeRate * $strikePrice * exp(-$riskFreeRate * $timeToExpiry) * $this->normalCDF($d2);
+            // Call: 減去利息收益
+            $term2 = -$riskFreeRate * $strikePrice * exp(-$riskFreeRate * $timeToExpiry) * $this->normalCDF($d2);
         } else {
-            $theta = (-$spotPrice * $nPrimeD1 * $volatility / (2 * $sqrtT))
-                   + $riskFreeRate * $strikePrice * exp(-$riskFreeRate * $timeToExpiry) * $this->normalCDF(-$d2);
+            // Put: 加上利息收益
+            $term2 = $riskFreeRate * $strikePrice * exp(-$riskFreeRate * $timeToExpiry) * $this->normalCDF(-$d2);
         }
-
-        // 轉換為每日 Theta (除以 365)
-        return round($theta / 365, 5);
+        
+        // 轉換為每日 Theta (年化值 / 365)
+        $theta = ($term1 + $term2) / 365;
+        
+        return round($theta, 4);
     }
 
     /**
-     * 計算 Vega (波動率敏感度)
-     * Vega = S * N'(d1) * sqrt(T) / 100
+     * 計算 Vega
+     * Vega = S * sqrt(T) * N'(d1)
+     * 
+     * 注意：返回的是 1% 波動率變動的影響
      */
     public function calculateVega(
         float $spotPrice,
         float $d1,
         float $timeToExpiry
     ): float {
-        $vega = $spotPrice * $this->normalPDF($d1) * sqrt($timeToExpiry) / 100;
+        $nPrime = $this->normalPDF($d1);
+        $vega = $spotPrice * sqrt($timeToExpiry) * $nPrime;
         
-        return round($vega, 5);
+        // 轉換為每 1% 波動率變動的價值
+        $vega = $vega / 100;
+        
+        return round($vega, 4);
     }
 
     /**
-     * 計算 Rho (利率敏感度)
+     * 計算 Rho
+     * Call Rho = K * T * e^(-rT) * N(d2)
+     * Put Rho = -K * T * e^(-rT) * N(-d2)
+     * 
+     * 注意：返回的是 1% 利率變動的影響
      */
     public function calculateRho(
         float $strikePrice,
@@ -165,19 +193,22 @@ class BlackScholesService
         float $riskFreeRate,
         string $optionType = 'call'
     ): float {
+        $discountFactor = exp(-$riskFreeRate * $timeToExpiry);
+        
         if (strtolower($optionType) === 'call') {
-            $rho = $strikePrice * $timeToExpiry * exp(-$riskFreeRate * $timeToExpiry) 
-                 * $this->normalCDF($d2) / 100;
+            $rho = $strikePrice * $timeToExpiry * $discountFactor * $this->normalCDF($d2);
         } else {
-            $rho = -$strikePrice * $timeToExpiry * exp(-$riskFreeRate * $timeToExpiry) 
-                 * $this->normalCDF(-$d2) / 100;
+            $rho = -$strikePrice * $timeToExpiry * $discountFactor * $this->normalCDF(-$d2);
         }
-
-        return round($rho, 5);
+        
+        // 轉換為每 1% 利率變動的價值
+        $rho = $rho / 100;
+        
+        return round($rho, 4);
     }
 
     /**
-     * 使用牛頓法計算隱含波動率
+     * 計算隱含波動率 (使用 Newton-Raphson 法)
      *
      * @param float $marketPrice 市場價格
      * @param float $spotPrice 標的資產現價
@@ -185,9 +216,8 @@ class BlackScholesService
      * @param float $timeToExpiry 到期時間(年)
      * @param float $riskFreeRate 無風險利率
      * @param string $optionType 選擇權類型
-     * @param float $initialGuess 初始猜測值
+     * @param float $tolerance 收斂容許誤差
      * @param int $maxIterations 最大迭代次數
-     * @param float $tolerance 容差
      * @return float|null 隱含波動率，失敗返回 null
      */
     public function calculateImpliedVolatility(
@@ -197,26 +227,15 @@ class BlackScholesService
         float $timeToExpiry,
         float $riskFreeRate,
         string $optionType = 'call',
-        float $initialGuess = 0.3,
-        int $maxIterations = 100,
-        float $tolerance = 0.0001
+        float $tolerance = 0.0001,
+        int $maxIterations = 100
     ): ?float {
-        // 檢查價內價值
-        $intrinsicValue = $this->calculateIntrinsicValue($spotPrice, $strikePrice, $optionType);
-        
-        if ($marketPrice < $intrinsicValue) {
-            Log::warning('市場價格低於內在價值', [
-                'market_price' => $marketPrice,
-                'intrinsic_value' => $intrinsicValue
-            ]);
-            return null;
-        }
-
-        $sigma = $initialGuess;
+        // 初始猜測值
+        $sigma = 0.3; // 30% 波動率作為起點
 
         for ($i = 0; $i < $maxIterations; $i++) {
             try {
-                // 計算理論價格
+                // 計算當前波動率下的理論價格
                 $theoreticalPrice = $this->calculatePrice(
                     $spotPrice,
                     $strikePrice,
@@ -226,21 +245,21 @@ class BlackScholesService
                     $optionType
                 );
 
-                // 計算價格差異
+                // 價格差異
                 $priceDiff = $theoreticalPrice - $marketPrice;
 
-                // 如果差異小於容差，返回結果
+                // 檢查是否收斂
                 if (abs($priceDiff) < $tolerance) {
                     return round($sigma, 6);
                 }
 
-                // 計算 Vega 用於牛頓法
+                // 計算 Vega (導數)
                 $d1 = $this->calculateD1($spotPrice, $strikePrice, $timeToExpiry, $riskFreeRate, $sigma);
-                $vega = $this->calculateVega($spotPrice, $d1, $timeToExpiry) * 100; // 乘以 100 因為之前除以 100
+                $vega = $spotPrice * sqrt($timeToExpiry) * $this->normalPDF($d1);
 
                 // 避免除以零
-                if ($vega < 0.0001) {
-                    Log::warning('Vega 值過小', ['vega' => $vega]);
+                if (abs($vega) < 1e-10) {
+                    Log::warning('IV 計算 Vega 過小', ['sigma' => $sigma, 'vega' => $vega]);
                     return null;
                 }
 
@@ -269,7 +288,7 @@ class BlackScholesService
     }
 
     /**
-     * 計算選擇權價內價值
+     * 計算選擇權內在價值
      */
     public function calculateIntrinsicValue(
         float $spotPrice,
@@ -298,6 +317,8 @@ class BlackScholesService
 
     /**
      * 判斷選擇權價性 (Moneyness)
+     * 
+     * 改進：調整閾值從 2% 降至 0.5%，更精確判斷 ATM
      *
      * @return string ITM (價內), ATM (價平), OTM (價外)
      */
@@ -305,7 +326,7 @@ class BlackScholesService
         float $spotPrice,
         float $strikePrice,
         string $optionType = 'call',
-        float $threshold = 0.02
+        float $threshold = 0.005 // 改進：從 0.02 調整為 0.005 (0.5%)
     ): string {
         $ratio = $spotPrice / $strikePrice;
 
@@ -321,9 +342,133 @@ class BlackScholesService
     }
 
     /**
+     * 新增：計算到期損益 (Payoff)
+     * 
+     * @param float $strikePrice 履約價
+     * @param float $premium 權利金成本
+     * @param string $optionType 選擇權類型
+     * @param string $position 部位方向 (long/short)
+     * @param array $spotPrices 標的價格陣列
+     * @return array 損益陣列
+     */
+    public function calculatePayoff(
+        float $strikePrice,
+        float $premium,
+        string $optionType = 'call',
+        string $position = 'long',
+        array $spotPrices = []
+    ): array {
+        $payoffs = [];
+        $multiplier = strtolower($position) === 'long' ? 1 : -1;
+
+        foreach ($spotPrices as $spot) {
+            if (strtolower($optionType) === 'call') {
+                // Call 到期價值 = max(S - K, 0)
+                $intrinsic = max(0, $spot - $strikePrice);
+            } else {
+                // Put 到期價值 = max(K - S, 0)
+                $intrinsic = max(0, $strikePrice - $spot);
+            }
+
+            // 損益 = (內在價值 - 權利金) * 部位方向
+            $payoff = ($intrinsic - $premium) * $multiplier;
+            $payoffs[] = round($payoff, 2);
+        }
+
+        return $payoffs;
+    }
+
+    /**
+     * 新增：計算 Greeks 時間衰減曲線
+     * 
+     * @param float $spotPrice
+     * @param float $strikePrice
+     * @param float $currentTimeToExpiry 當前距到期時間(年)
+     * @param float $riskFreeRate
+     * @param float $volatility
+     * @param string $optionType
+     * @param int $points 計算點數
+     * @return array 時間衰減數據
+     */
+    public function calculateTimeDecay(
+        float $spotPrice,
+        float $strikePrice,
+        float $currentTimeToExpiry,
+        float $riskFreeRate,
+        float $volatility,
+        string $optionType = 'call',
+        int $points = 10
+    ): array {
+        $result = [
+            'days' => [],
+            'prices' => [],
+            'deltas' => [],
+            'gammas' => [],
+            'thetas' => [],
+            'vegas' => []
+        ];
+
+        $currentDays = $currentTimeToExpiry * 365;
+        $interval = $currentDays / $points;
+
+        for ($i = 0; $i <= $points; $i++) {
+            $daysRemaining = max(1, $currentDays - ($i * $interval));
+            $timeToExpiry = $daysRemaining / 365;
+
+            $result['days'][] = round($daysRemaining);
+
+            $price = $this->calculatePrice(
+                $spotPrice, $strikePrice, $timeToExpiry, $riskFreeRate, $volatility, $optionType
+            );
+            $result['prices'][] = $price;
+
+            $greeks = $this->calculateGreeks(
+                $spotPrice, $strikePrice, $timeToExpiry, $riskFreeRate, $volatility, $optionType
+            );
+
+            $result['deltas'][] = $greeks['delta'];
+            $result['gammas'][] = $greeks['gamma'];
+            $result['thetas'][] = $greeks['theta'];
+            $result['vegas'][] = $greeks['vega'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * 新增：批次計算不同股價下的選擇權價格 (用於精確繪圖)
+     * 
+     * @param float $strikePrice
+     * @param float $timeToExpiry
+     * @param float $riskFreeRate
+     * @param float $volatility
+     * @param string $optionType
+     * @param array $spotPrices
+     * @return array
+     */
+    public function batchCalculatePrices(
+        float $strikePrice,
+        float $timeToExpiry,
+        float $riskFreeRate,
+        float $volatility,
+        string $optionType,
+        array $spotPrices
+    ): array {
+        $prices = [];
+
+        foreach ($spotPrices as $spot) {
+            $prices[] = $this->calculatePrice(
+                $spot, $strikePrice, $timeToExpiry, $riskFreeRate, $volatility, $optionType
+            );
+        }
+
+        return $prices;
+    }
+
+    /**
      * 計算 d1
      */
-    protected function calculateD1(
+    private function calculateD1(
         float $spotPrice,
         float $strikePrice,
         float $timeToExpiry,
@@ -333,50 +478,24 @@ class BlackScholesService
         $numerator = log($spotPrice / $strikePrice) 
                    + ($riskFreeRate + 0.5 * pow($volatility, 2)) * $timeToExpiry;
         $denominator = $volatility * sqrt($timeToExpiry);
-
+        
         return $numerator / $denominator;
     }
 
     /**
      * 計算 d2
      */
-    protected function calculateD2(
-        float $d1,
-        float $volatility,
-        float $timeToExpiry
-    ): float {
+    private function calculateD2(float $d1, float $volatility, float $timeToExpiry): float
+    {
         return $d1 - $volatility * sqrt($timeToExpiry);
     }
 
     /**
-     * 標準常態累積分佈函數 (CDF)
+     * 標準常態分佈累積分佈函數 (CDF)
      * 使用 Abramowitz and Stegun 近似法
      */
-    protected function normalCDF(float $x): float
+    private function normalCDF(float $x): float
     {
-        if ($x < -7.0) return 0.0;
-        if ($x > 7.0) return 1.0;
-
-        // 使用誤差函數近似
-        $erfValue = $this->erf($x / sqrt(2.0));
-        return 0.5 * (1.0 + $erfValue);
-    }
-
-    /**
-     * 標準常態機率密度函數 (PDF)
-     */
-    protected function normalPDF(float $x): float
-    {
-        return exp(-0.5 * $x * $x) / sqrt(2.0 * M_PI);
-    }
-
-    /**
-     * 誤差函數 (Error Function)
-     * 使用 Abramowitz and Stegun 公式 7.1.26
-     */
-    protected function erf(float $x): float
-    {
-        // 常數
         $a1 =  0.254829592;
         $a2 = -0.284496736;
         $a3 =  1.421413741;
@@ -384,40 +503,43 @@ class BlackScholesService
         $a5 =  1.061405429;
         $p  =  0.3275911;
 
-        // 保存符號
-        $sign = ($x < 0) ? -1 : 1;
-        $x = abs($x);
+        $sign = $x < 0 ? -1 : 1;
+        $x = abs($x) / sqrt(2);
 
-        // A&S formula 7.1.26
         $t = 1.0 / (1.0 + $p * $x);
         $y = 1.0 - ((((($a5 * $t + $a4) * $t) + $a3) * $t + $a2) * $t + $a1) * $t * exp(-$x * $x);
 
-        return $sign * $y;
+        return 0.5 * (1.0 + $sign * $y);
+    }
+
+    /**
+     * 標準常態分佈機率密度函數 (PDF)
+     */
+    private function normalPDF(float $x): float
+    {
+        return exp(-0.5 * pow($x, 2)) / sqrt(2 * M_PI);
     }
 
     /**
      * 參數驗證
      */
-    protected function validateParameters(
+    private function validateParameters(
         float $spotPrice,
         float $strikePrice,
         float $timeToExpiry,
         float $volatility
     ): void {
         if ($spotPrice <= 0) {
-            throw new \InvalidArgumentException('標的價格必須大於 0');
+            throw new \InvalidArgumentException('標的資產價格必須大於零');
         }
-
         if ($strikePrice <= 0) {
-            throw new \InvalidArgumentException('履約價格必須大於 0');
+            throw new \InvalidArgumentException('履約價格必須大於零');
         }
-
         if ($timeToExpiry <= 0) {
-            throw new \InvalidArgumentException('到期時間必須大於 0');
+            throw new \InvalidArgumentException('到期時間必須大於零');
         }
-
-        if ($volatility <= 0 || $volatility > 10) {
-            throw new \InvalidArgumentException('波動率必須在 0 到 10 之間');
+        if ($volatility <= 0) {
+            throw new \InvalidArgumentException('波動率必須大於零');
         }
     }
 }
