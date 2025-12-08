@@ -154,7 +154,7 @@
                 <v-icon size="64" color="grey-lighten-2">mdi-chart-line</v-icon>
                 <div class="text-h6 text-grey mt-2">請輸入參數並點擊計算</div>
               </div>
-              
+
               <div v-else>
                 <div class="text-subtitle-1 mb-2 opacity-75">
                   {{ mode === 'price' ? '理論價格 (Theoretical Price)' : '隱含波動率 (Implied Volatility)' }}
@@ -163,10 +163,10 @@
                   <span v-if="mode === 'price'">${{ result.theoretical_price }}</span>
                   <span v-else>{{ result.implied_volatility_percentage }}</span>
                 </div>
-                
-                <v-chip 
+
+                <v-chip
                   v-if="result.moneyness"
-                  class="mt-3" 
+                  class="mt-3"
                   :color="getMoneynessColor(result.moneyness)"
                   variant="flat"
                 >
@@ -210,7 +210,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import axios from 'axios'
-import Chart from 'chart.js/auto' // 需確認專案有安裝 chart.js
+import Chart from 'chart.js/auto'
 
 // 狀態
 const mode = ref('price') // 'price' | 'iv'
@@ -231,7 +231,7 @@ const params = reactive({
 })
 
 // 日期處理
-const expiryDate = ref('') 
+const expiryDate = ref('')
 
 // 計算剩餘天數
 const daysRemaining = computed(() => {
@@ -279,11 +279,11 @@ const getValueColor = (val) => {
   return ''
 }
 
-// 核心計算 API
+// ✅ 核心計算 API - 修正 URL 路徑
 const calculate = async () => {
   loading.value = true
   result.value = null
-  
+
   try {
     let url = ''
     let payload = {
@@ -295,18 +295,20 @@ const calculate = async () => {
     }
 
     if (mode.value === 'price') {
-      url = '/api/black-scholes/calculate'
+      // ✅ 修正: 移除 /api 前綴，因為 axios baseURL 已經是 /api
+      url = 'black-scholes/calculate'
       payload.volatility = params.volatility / 100
     } else {
-      url = '/api/black-scholes/implied-volatility'
+      // ✅ 修正: 移除 /api 前綴
+      url = 'black-scholes/implied-volatility'
       payload.market_price = params.marketPrice
     }
 
     const response = await axios.post(url, payload)
-    
+
     if (response.data.success) {
       result.value = response.data.data
-      
+
       // 如果是價格模式，更新圖表
       if (mode.value === 'price') {
         await nextTick()
@@ -342,17 +344,17 @@ const updateChart = () => {
     const percentChange = i / 100
     const spot = currentSpot * (1 + percentChange)
     labels.push(spot.toFixed(0))
-    
-    // 使用 Delta-Gamma 近似法繪製曲線 (或者也可以批次 call API)
+
+    // 使用 Delta-Gamma 近似法繪製曲線
     // P_new ≈ P + Delta * dS + 0.5 * Gamma * (dS)^2
     const dS = spot - currentSpot
     const estPrice = currentPrice + (delta * dS) + (0.5 * gamma * Math.pow(dS, 2))
-    
+
     dataPoints.push(Math.max(0, estPrice)) // 價格不能為負
   }
 
   const ctx = sensitivityChart.value.getContext('2d')
-  
+
   chartInstance.value = new Chart(ctx, {
     type: 'line',
     data: {

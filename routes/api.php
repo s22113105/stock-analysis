@@ -92,6 +92,7 @@ Route::prefix('options')->group(function () {
 Route::prefix('black-scholes')->group(function () {
     Route::post('/calculate', [BlackScholesController::class, 'calculate']);
     Route::post('/batch', [BlackScholesController::class, 'batchCalculate']);
+    Route::post('/implied-volatility', [BlackScholesController::class, 'impliedVolatility']);  // ← 新增這行
 });
 
 // ==========================================
