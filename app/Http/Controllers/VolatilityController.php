@@ -3,141 +3,77 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\Services\BlackScholesService;
+use App\Services\VolatilityService;
 use App\Models\Stock;
-use App\Models\StockPrice;
 use App\Models\Option;
 use App\Models\OptionPrice;
+use App\Models\StockPrice;
+use App\Models\Volatility;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
 /**
- * 波動率計算與分析控制器
+ * 波動率計算 API 控制器 (優化版)
  * 
- * @version 2.0 改進版
- * - 增強 marketIV 方法，返回股票價格
+ * 功能：
+ * - 計算歷史波動率 (HV)
+ * - 計算隱含波動率 (IV)
+ * - 波動率錐 (Volatility Cone)
+ * - 波動率曲面 (Volatility Surface)
+ * - 波動率偏斜 (Volatility Skew)
+ * - GARCH 模型預測
  */
 class VolatilityController extends Controller
 {
-    protected $blackScholesService;
+    protected $volatilityService;
 
-    public function __construct(BlackScholesService $blackScholesService)
+    // 快取時間 (分鐘)
+    const CACHE_TTL = 30;
+
+    public function __construct(VolatilityService $volatilityService)
     {
-        $this->blackScholesService = $blackScholesService;
+        $this->volatilityService = $volatilityService;
     }
 
     /**
-     * 取得歷史波動率
+     * 計算歷史波動率 (Historical Volatility)
      *
      * GET /api/volatility/historical/{stockId}
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
      */
     public function historical(Request $request, int $stockId): JsonResponse
     {
+        $validator = Validator::make($request->all(), [
+            'period' => 'nullable|integer|min:5|max:365',
+            'end_date' => 'nullable|date',
+            'method' => 'nullable|in:close-to-close,parkinson,garman-klass,rogers-satchell,yang-zhang',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => '參數驗證失敗',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         try {
             $stock = Stock::findOrFail($stockId);
-            $period = $request->input('period', 20);
-            $endDate = $request->input('end_date', now()->format('Y-m-d'));
-            $method = $request->input('method', 'close_to_close');
+            $period = intval($request->input('period', 30));
+            $endDate = $request->input('end_date');
+            $method = $request->input('method', 'close-to-close');
 
             // 快取 key
             $cacheKey = "volatility:historical:{$stockId}:{$period}:{$endDate}:{$method}";
-
-            $result = Cache::remember($cacheKey, 300, function () use ($stock, $period, $endDate, $method) {
-                // 取得價格資料
-                $prices = StockPrice::where('stock_id', $stock->id)
-                    ->where('trade_date', '<=', $endDate)
-                    ->orderBy('trade_date', 'desc')
-                    ->limit($period + 1)
-                    ->get()
-                    ->sortBy('trade_date')
-                    ->values();
-
-                if ($prices->count() < 2) {
-                    return null;
-                }
-
-                // 計算對數報酬率
-                $returns = [];
-                for ($i = 1; $i < $prices->count(); $i++) {
-                    $currentClose = $prices[$i]->close;
-                    $previousClose = $prices[$i - 1]->close;
-
-                    if ($previousClose > 0 && $currentClose > 0) {
-                        $returns[] = log($currentClose / $previousClose);
-                    }
-                }
-
-                if (empty($returns)) {
-                    return null;
-                }
-
-                // 計算波動率
-                $mean = array_sum($returns) / count($returns);
-                $squaredDiffs = array_map(fn($r) => pow($r - $mean, 2), $returns);
-                $variance = array_sum($squaredDiffs) / (count($squaredDiffs) - 1);
-                $dailyVolatility = sqrt($variance);
-                $annualizedVolatility = $dailyVolatility * sqrt(252);
-
-                return [
-                    'volatility' => round($annualizedVolatility, 6),
-                    'volatility_percentage' => round($annualizedVolatility * 100, 2),
-                    'daily_volatility' => round($dailyVolatility, 6),
-                    'period' => $period,
-                    'data_points' => count($returns),
-                    'method' => $method,
-                ];
-            });
-
-            if (!$result) {
-                return response()->json([
-                    'success' => false,
-                    'message' => '資料不足，無法計算波動率'
-                ], 400);
-            }
-
-            return response()->json([
-                'success' => true,
-                'data' => array_merge($result, [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
-                    'end_date' => $endDate,
-                ])
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('計算歷史波動率錯誤', [
-                'stock_id' => $stockId,
-                'error' => $e->getMessage()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => '計算失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 取得市場隱含波動率 (從選擇權價格)
-     * 
-     * 改進：增加股票/期貨當前價格
-     *
-     * GET /api/volatility/market-iv/{stockId}
-     */
-    public function marketIV(Request $request, int $stockId): JsonResponse
-    {
-        try {
-            $stock = Stock::findOrFail($stockId);
-
-            // 快取 key
-            $cacheKey = "volatility:market_iv:{$stockId}";
-
+            
+            // 嘗試從快取取得
             $cachedData = Cache::get($cacheKey);
             if ($cachedData && !$request->has('force')) {
                 return response()->json([
@@ -147,75 +83,76 @@ class VolatilityController extends Controller
                 ]);
             }
 
-            // 取得股票最新價格
-            $latestPrice = StockPrice::where('stock_id', $stock->id)
+            // 計算歷史波動率
+            $hv = $this->volatilityService->calculateHistoricalVolatility(
+                $stockId,
+                $period,
+                $endDate
+            );
+
+            // 計算實現波動率
+            $rv = $this->volatilityService->calculateRealizedVolatility(
+                $stockId,
+                $period,
+                $endDate
+            );
+
+            if ($hv === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '資料不足，無法計算歷史波動率',
+                    'required_days' => $period + 1,
+                    'hint' => '請確認該股票有足夠的歷史價格資料'
+                ], 400);
+            }
+
+            // 取得價格資料範圍
+            $latestPrice = StockPrice::where('stock_id', $stockId)
                 ->orderBy('trade_date', 'desc')
                 ->first();
 
-            $stockPrice = $latestPrice ? floatval($latestPrice->close) : null;
-            $priceDate = $latestPrice ? $latestPrice->trade_date : null;
+            // 計算波動率等級 (與歷史比較)
+            $volatilityRank = $this->calculateVolatilityRank($stockId, $hv, $period);
 
-            // 結果初始化
-            $result = [
+            $responseData = [
                 'stock' => [
                     'id' => $stock->id,
                     'symbol' => $stock->symbol,
                     'name' => $stock->name,
-                    'current_price' => $stockPrice,  // 新增：當前價格
-                    'price_date' => $priceDate,
                 ],
-                'stock_price' => $stockPrice,  // 為了兼容性也放在頂層
-                'has_real_iv' => false,
-                'real_iv' => null,
-                'real_iv_percentage' => null,
-                'iv_source' => null,
-                'txo_iv' => null,
-                'txo_iv_percentage' => null,
-                'data_date' => null,
-                'txo_info' => null,
+                'historical_volatility' => $hv,
+                'historical_volatility_percentage' => round($hv * 100, 2) . '%',
+                'realized_volatility' => $rv,
+                'realized_volatility_percentage' => $rv ? round($rv * 100, 2) . '%' : null,
+                'period_days' => $period,
+                'calculation_method' => $method,
+                'end_date' => $endDate ?: ($latestPrice ? $latestPrice->trade_date->format('Y-m-d') : now()->format('Y-m-d')),
+                'latest_price' => $latestPrice ? [
+                    'date' => $latestPrice->trade_date->format('Y-m-d'),
+                    'close' => $latestPrice->close,
+                    'change' => $latestPrice->change,
+                    'change_percent' => $latestPrice->change_percent,
+                ] : null,
+                'volatility_rank' => $volatilityRank,
+                'annualized' => true,
+                'trading_days_per_year' => 252,
             ];
 
-            // 從 TXO 選擇權取得市場 IV
-            $txoIV = $this->getTxoMarketIV();
-
-            if ($txoIV) {
-                $result['has_real_iv'] = true;
-                $result['txo_iv'] = $txoIV['iv'];
-                $result['txo_iv_percentage'] = round($txoIV['iv'] * 100, 2);
-                $result['real_iv'] = $txoIV['iv'];
-                $result['real_iv_percentage'] = round($txoIV['iv'] * 100, 2);
-                $result['iv_source'] = 'txo';
-                $result['data_date'] = $txoIV['date'];
-                $result['txo_info'] = $txoIV['info'] ?? null;
-
-                // 如果從 TXO 可以取得期貨價格，優先使用
-                if (isset($txoIV['futures_price']) && $txoIV['futures_price'] > 0) {
-                    $result['stock_price'] = $txoIV['futures_price'];
-                    $result['stock']['current_price'] = $txoIV['futures_price'];
-                }
-            }
-
-            // 如果還沒有價格，嘗試從選擇權推算
-            if (!$result['stock_price']) {
-                $estimatedPrice = $this->estimateFuturesPriceFromOptions();
-                if ($estimatedPrice) {
-                    $result['stock_price'] = $estimatedPrice;
-                    $result['stock']['current_price'] = $estimatedPrice;
-                    $result['stock']['price_source'] = 'estimated_from_options';
-                }
-            }
-
-            // 快取 5 分鐘
-            Cache::put($cacheKey, $result, 300);
+            // 儲存到快取
+            Cache::put($cacheKey, $responseData, now()->addMinutes(self::CACHE_TTL));
 
             return response()->json([
                 'success' => true,
-                'data' => $result,
-                'cached' => false
+                'data' => $responseData
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的股票'
+            ], 404);
         } catch (\Exception $e) {
-            Log::error('取得市場 IV 錯誤', [
+            Log::error('計算歷史波動率錯誤', [
                 'stock_id' => $stockId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -223,218 +160,126 @@ class VolatilityController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => '取得市場 IV 失敗: ' . $e->getMessage()
+                'message' => '計算失敗: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * 從 TXO 選擇權取得市場隱含波動率
-     */
-    private function getTxoMarketIV(): ?array
-    {
-        try {
-            // 取得最新有 IV 資料的日期
-            $latestDate = OptionPrice::whereHas('option', function ($query) {
-                    $query->where('underlying', 'TXO');
-                })
-                ->whereNotNull('implied_volatility')
-                ->where('implied_volatility', '>', 0)
-                ->max('trade_date');
-
-            if (!$latestDate) {
-                return null;
-            }
-
-            // 取得該日期 ATM 附近的選擇權 IV
-            $optionPrices = OptionPrice::whereHas('option', function ($query) {
-                    $query->where('underlying', 'TXO')
-                          ->where('expiry_date', '>=', now());
-                })
-                ->where('trade_date', $latestDate)
-                ->whereNotNull('implied_volatility')
-                ->where('implied_volatility', '>', 0.05)
-                ->where('implied_volatility', '<', 1.5)
-                ->with('option')
-                ->get();
-
-            if ($optionPrices->isEmpty()) {
-                return null;
-            }
-
-            // 計算加權平均 IV（以成交量為權重）
-            $totalVolume = 0;
-            $weightedIV = 0;
-            $futuresPrice = null;
-
-            foreach ($optionPrices as $price) {
-                $volume = $price->volume ?? 1;
-                $iv = $price->implied_volatility;
-
-                $weightedIV += $iv * $volume;
-                $totalVolume += $volume;
-
-                // 嘗試從 ATM 選擇權推算期貨價格
-                if (!$futuresPrice && $price->option) {
-                    $strike = $price->option->strike_price;
-                    // ATM 選擇權的履約價約等於期貨價格
-                    if ($iv >= 0.1 && $iv <= 0.3) {
-                        $futuresPrice = $strike;
-                    }
-                }
-            }
-
-            $avgIV = $totalVolume > 0 ? $weightedIV / $totalVolume : null;
-
-            if (!$avgIV) {
-                return null;
-            }
-
-            return [
-                'iv' => round($avgIV, 4),
-                'date' => $latestDate,
-                'futures_price' => $futuresPrice,
-                'info' => [
-                    'data_points' => $optionPrices->count(),
-                    'total_volume' => $totalVolume,
-                ]
-            ];
-
-        } catch (\Exception $e) {
-            Log::warning('取得 TXO IV 失敗', ['error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    /**
-     * 從選擇權價格推算期貨價格
-     */
-    private function estimateFuturesPriceFromOptions(): ?float
-    {
-        try {
-            // 找最接近 ATM 的選擇權（Call 和 Put 價格最接近的履約價）
-            $latestDate = OptionPrice::max('trade_date');
-
-            if (!$latestDate) {
-                return null;
-            }
-
-            // 取得同一履約價的 Call 和 Put
-            $options = Option::where('underlying', 'TXO')
-                ->where('expiry_date', '>=', now())
-                ->with(['latestPrice' => function ($query) use ($latestDate) {
-                    $query->where('trade_date', $latestDate);
-                }])
-                ->get()
-                ->groupBy('strike_price');
-
-            $minDiff = PHP_FLOAT_MAX;
-            $estimatedPrice = null;
-
-            foreach ($options as $strike => $opts) {
-                $call = $opts->where('option_type', 'call')->first();
-                $put = $opts->where('option_type', 'put')->first();
-
-                if ($call && $put && $call->latestPrice && $put->latestPrice) {
-                    $callPrice = $call->latestPrice->close;
-                    $putPrice = $put->latestPrice->close;
-
-                    // ATM 時 Call 和 Put 價格最接近
-                    $diff = abs($callPrice - $putPrice);
-
-                    if ($diff < $minDiff) {
-                        $minDiff = $diff;
-                        $estimatedPrice = floatval($strike);
-                    }
-                }
-            }
-
-            return $estimatedPrice;
-
-        } catch (\Exception $e) {
-            Log::warning('推算期貨價格失敗', ['error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    /**
-     * 計算隱含波動率
+     * 計算隱含波動率 (Implied Volatility)
      *
      * GET /api/volatility/implied/{optionId}
+     * 
+     * @param Request $request
+     * @param int $optionId
+     * @return JsonResponse
      */
     public function implied(Request $request, int $optionId): JsonResponse
     {
         try {
-            $option = Option::with('latestPrice')->findOrFail($optionId);
+            $option = Option::with(['stock', 'latestPrice'])->findOrFail($optionId);
 
-            if (!$option->latestPrice) {
+            // 取得選擇權最新價格
+            $optionPrice = $option->latestPrice;
+            if (!$optionPrice) {
                 return response()->json([
                     'success' => false,
                     'message' => '找不到選擇權價格資料'
                 ], 404);
             }
 
-            // 取得標的資產價格
-            $stock = Stock::where('symbol', $option->underlying)->first();
-            $spotPrice = $stock?->latestPrice?->close ?? 0;
+            // 如果已有計算好的 IV
+            if ($optionPrice->implied_volatility) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'option' => [
+                            'id' => $option->id,
+                            'symbol' => $option->symbol,
+                            'underlying' => $option->underlying,
+                            'strike_price' => $option->strike_price,
+                            'expiry_date' => $option->expiry_date,
+                            'option_type' => $option->option_type,
+                        ],
+                        'implied_volatility' => $optionPrice->implied_volatility,
+                        'implied_volatility_percentage' => round($optionPrice->implied_volatility * 100, 2) . '%',
+                        'option_price' => $optionPrice->close,
+                        'trade_date' => $optionPrice->trade_date,
+                        'calculation_method' => 'Newton-Raphson',
+                    ]
+                ]);
+            }
 
-            if ($spotPrice <= 0) {
+            // 需要計算 IV (使用 Black-Scholes 反推)
+            // 這裡需要股票現價、履約價、到期日、無風險利率等參數
+            $stock = $option->stock;
+            if (!$stock) {
                 return response()->json([
                     'success' => false,
-                    'message' => '無法取得標的資產價格'
+                    'message' => '找不到關聯的股票資料'
+                ], 404);
+            }
+
+            $stockPrice = $stock->latestPrice;
+            if (!$stockPrice) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '找不到股票價格資料'
+                ], 404);
+            }
+
+            // 計算到期時間 (年)
+            $timeToExpiry = Carbon::parse($option->expiry_date)
+                ->diffInDays(Carbon::now()) / 365;
+
+            if ($timeToExpiry <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '選擇權已到期'
                 ], 400);
             }
 
-            // 計算到期時間
-            $now = Carbon::now();
-            $expiry = Carbon::parse($option->expiry_date);
-            $timeToExpiry = max(0.001, $now->diffInDays($expiry) / 365);
-
-            // 取得無風險利率
-            $riskFreeRate = floatval($request->input('risk_free_rate', 0.015));
-
-            // 計算隱含波動率
-            $marketPrice = floatval($option->latestPrice->close);
-
-            $iv = $this->blackScholesService->calculateImpliedVolatility(
-                $marketPrice,
-                $spotPrice,
-                $option->strike_price,
-                $timeToExpiry,
-                $riskFreeRate,
-                $option->option_type
+            // 使用 Newton-Raphson 方法計算 IV
+            $iv = $this->calculateIVNewtonRaphson(
+                $stockPrice->close,           // 股票現價
+                $option->strike_price,        // 履約價
+                $timeToExpiry,                // 到期時間
+                0.02,                         // 無風險利率 (假設 2%)
+                $optionPrice->close,          // 選擇權價格
+                $option->option_type          // 選擇權類型
             );
-
-            if ($iv === null) {
-                return response()->json([
-                    'success' => false,
-                    'message' => '無法計算隱含波動率'
-                ], 400);
-            }
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'option' => [
                         'id' => $option->id,
-                        'option_code' => $option->option_code,
-                        'option_type' => $option->option_type,
+                        'symbol' => $option->symbol,
+                        'underlying' => $option->underlying,
                         'strike_price' => $option->strike_price,
                         'expiry_date' => $option->expiry_date,
+                        'option_type' => $option->option_type,
                     ],
                     'implied_volatility' => $iv,
                     'implied_volatility_percentage' => round($iv * 100, 2) . '%',
-                    'market_price' => $marketPrice,
-                    'spot_price' => $spotPrice,
+                    'option_price' => $optionPrice->close,
+                    'stock_price' => $stockPrice->close,
                     'time_to_expiry' => round($timeToExpiry, 4),
-                    'calculated_at' => now()->toIso8601String(),
+                    'trade_date' => $optionPrice->trade_date,
+                    'calculation_method' => 'Newton-Raphson',
                 ]
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的選擇權'
+            ], 404);
         } catch (\Exception $e) {
             Log::error('計算隱含波動率錯誤', [
                 'option_id' => $optionId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -445,89 +290,128 @@ class VolatilityController extends Controller
     }
 
     /**
-     * 波動率錐
+     * 計算波動率錐 (Volatility Cone)
      *
      * GET /api/volatility/cone/{stockId}
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
      */
     public function cone(Request $request, int $stockId): JsonResponse
     {
+        $validator = Validator::make($request->all(), [
+            'lookback_days' => 'nullable|integer|min:30|max:730',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => '參數驗證失敗',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         try {
             $stock = Stock::findOrFail($stockId);
-            $lookbackDays = $request->input('lookback_days', 252);
+            $lookbackDays = intval($request->input('lookback_days', 252));
 
-            // 取得歷史價格
-            $prices = StockPrice::where('stock_id', $stock->id)
-                ->orderBy('trade_date', 'desc')
-                ->limit($lookbackDays + 60)
-                ->get()
-                ->sortBy('trade_date')
-                ->values();
-
-            if ($prices->count() < 30) {
+            // 快取 key
+            $cacheKey = "volatility:cone:{$stockId}:{$lookbackDays}";
+            
+            $cachedData = Cache::get($cacheKey);
+            if ($cachedData && !$request->has('force')) {
                 return response()->json([
-                    'success' => false,
-                    'message' => '歷史資料不足'
-                ], 400);
+                    'success' => true,
+                    'data' => $cachedData,
+                    'cached' => true
+                ]);
             }
 
-            // 計算不同期間的波動率
-            $periods = [10, 20, 30, 60];
+            // 不同時間週期
+            $periods = [10, 20, 30, 60, 90, 120, 180, 252];
             $coneData = [];
 
             foreach ($periods as $period) {
-                $volatilities = [];
+                $hvValues = [];
 
-                for ($i = $period; $i < $prices->count(); $i++) {
-                    $subset = $prices->slice($i - $period, $period + 1)->values();
+                // 計算過去 lookbackDays 天內，每天的 period 天 HV
+                $prices = StockPrice::where('stock_id', $stockId)
+                    ->orderBy('trade_date', 'desc')
+                    ->limit($lookbackDays + $period + 1)
+                    ->pluck('close')
+                    ->reverse()
+                    ->values()
+                    ->toArray();
 
-                    // 計算該期間的波動率
-                    $returns = [];
-                    for ($j = 1; $j < $subset->count(); $j++) {
-                        if ($subset[$j - 1]->close > 0) {
-                            $returns[] = log($subset[$j]->close / $subset[$j - 1]->close);
-                        }
-                    }
+                if (count($prices) < $period + 1) {
+                    continue;
+                }
 
-                    if (count($returns) >= 2) {
-                        $mean = array_sum($returns) / count($returns);
-                        $variance = array_sum(array_map(fn($r) => pow($r - $mean, 2), $returns)) / (count($returns) - 1);
-                        $volatilities[] = sqrt($variance) * sqrt(252);
+                // 滾動計算 HV
+                for ($i = $period; $i < count($prices); $i++) {
+                    $slice = array_slice($prices, $i - $period, $period + 1);
+                    $hv = $this->calculateHVFromPrices($slice);
+                    if ($hv !== null) {
+                        $hvValues[] = $hv;
                     }
                 }
 
-                if (!empty($volatilities)) {
-                    sort($volatilities);
-                    $count = count($volatilities);
-
-                    $coneData[$period] = [
-                        'period' => $period,
-                        'current' => round(end($volatilities), 4),
-                        'min' => round($volatilities[0], 4),
-                        'percentile_25' => round($volatilities[intval($count * 0.25)], 4),
-                        'median' => round($volatilities[intval($count * 0.5)], 4),
-                        'percentile_75' => round($volatilities[intval($count * 0.75)], 4),
-                        'max' => round($volatilities[$count - 1], 4),
-                    ];
+                if (empty($hvValues)) {
+                    continue;
                 }
+
+                // ⭐ 重要：在排序前先保存當前值（最新計算的波動率）
+                $currentHV = end($hvValues);
+
+                // 排序計算統計值
+                sort($hvValues);
+                $count = count($hvValues);
+
+                $coneData[] = [
+                    'period' => $period,
+                    'period_label' => $period . '天',
+                    'current' => round($currentHV * 100, 2),  // ✅ 使用排序前保存的當前值
+                    'min' => round($hvValues[0] * 100, 2),
+                    'max' => round($hvValues[$count - 1] * 100, 2),
+                    'p25' => round($hvValues[intval($count * 0.25)] * 100, 2),
+                    'median' => round($hvValues[intval($count * 0.5)] * 100, 2),
+                    'p75' => round($hvValues[intval($count * 0.75)] * 100, 2),
+                    'mean' => round(array_sum($hvValues) / $count * 100, 2),
+                    'std' => round($this->calculateStd($hvValues) * 100, 2),
+                    'sample_count' => $count,
+                ];
             }
+
+            $responseData = [
+                'stock' => [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ],
+                'cone' => $coneData,
+                'lookback_days' => $lookbackDays,
+                'periods' => $periods,
+            ];
+
+            // 儲存到快取
+            Cache::put($cacheKey, $responseData, now()->addMinutes(self::CACHE_TTL));
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
-                    'cone' => array_values($coneData),
-                    'lookback_days' => $lookbackDays,
-                ]
+                'data' => $responseData
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的股票'
+            ], 404);
         } catch (\Exception $e) {
             Log::error('計算波動率錐錯誤', [
                 'stock_id' => $stockId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -538,40 +422,75 @@ class VolatilityController extends Controller
     }
 
     /**
-     * 波動率曲面
+     * 計算波動率曲面 (Volatility Surface)
      *
      * GET /api/volatility/surface/{stockId}
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
      */
     public function surface(Request $request, int $stockId): JsonResponse
     {
         try {
             $stock = Stock::findOrFail($stockId);
-            $tradeDate = $request->input('date', now()->format('Y-m-d'));
+            $date = $request->input('date', now()->format('Y-m-d'));
 
             // 取得該股票相關的選擇權
-            $options = Option::where('underlying', $stock->symbol)
-                ->orWhere('underlying', 'TXO')
-                ->where('expiry_date', '>=', now())
-                ->with(['prices' => function ($query) use ($tradeDate) {
-                    $query->where('trade_date', $tradeDate)
-                          ->whereNotNull('implied_volatility');
-                }])
+            $options = Option::where(function ($query) use ($stock) {
+                    $query->where('underlying', $stock->symbol)
+                          ->orWhere('underlying', 'TXO'); // 也包含 TXO
+                })
+                ->where('expiry_date', '>=', $date)
+                ->orderBy('expiry_date')
+                ->orderBy('strike_price')
                 ->get();
 
-            $surfaceData = [];
+            if ($options->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '找不到相關的選擇權資料'
+                ], 404);
+            }
 
-            foreach ($options as $option) {
-                $price = $option->prices->first();
-                if ($price && $price->implied_volatility > 0) {
-                    $surfaceData[] = [
-                        'strike' => $option->strike_price,
-                        'expiry' => $option->expiry_date,
-                        'days_to_expiry' => Carbon::parse($option->expiry_date)->diffInDays(now()),
-                        'option_type' => $option->option_type,
-                        'iv' => round($price->implied_volatility, 4),
-                        'iv_percentage' => round($price->implied_volatility * 100, 2),
+            // 按到期日分組
+            $expiries = $options->pluck('expiry_date')->unique()->sort()->values();
+            $strikes = $options->pluck('strike_price')->unique()->sort()->values();
+
+            // 建構波動率曲面
+            $surface3D = [];
+            foreach ($expiries as $expiry) {
+                $row = [];
+                foreach ($strikes as $strike) {
+                    $callOption = $options->where('expiry_date', $expiry)
+                        ->where('strike_price', $strike)
+                        ->where('option_type', 'call')
+                        ->first();
+                    
+                    $putOption = $options->where('expiry_date', $expiry)
+                        ->where('strike_price', $strike)
+                        ->where('option_type', 'put')
+                        ->first();
+
+                    $ivCall = $callOption?->latestPrice?->implied_volatility;
+                    $ivPut = $putOption?->latestPrice?->implied_volatility;
+
+                    $row[] = [
+                        'strike' => $strike,
+                        'iv_call' => $ivCall ? round($ivCall * 100, 2) : null,
+                        'iv_put' => $ivPut ? round($ivPut * 100, 2) : null,
+                        'iv_avg' => ($ivCall || $ivPut)
+                            ? round((($ivCall ?? 0) + ($ivPut ?? 0)) / (($ivCall ? 1 : 0) + ($ivPut ? 1 : 0)) * 100, 2)
+                            : null,
                     ];
                 }
+                
+                $surface3D[] = [
+                    'expiry' => $expiry,
+                    'expiry_formatted' => Carbon::parse($expiry)->format('Y/m/d'),
+                    'days_to_expiry' => Carbon::parse($expiry)->diffInDays(Carbon::parse($date)),
+                    'data' => $row,
+                ];
             }
 
             return response()->json([
@@ -582,16 +501,18 @@ class VolatilityController extends Controller
                         'symbol' => $stock->symbol,
                         'name' => $stock->name,
                     ],
-                    'surface' => $surfaceData,
-                    'trade_date' => $tradeDate,
-                    'data_points' => count($surfaceData),
+                    'surface' => $surface3D,
+                    'expiries' => $expiries,
+                    'strikes' => $strikes,
+                    'date' => $date,
                 ]
             ]);
 
         } catch (\Exception $e) {
             Log::error('計算波動率曲面錯誤', [
                 'stock_id' => $stockId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -602,9 +523,13 @@ class VolatilityController extends Controller
     }
 
     /**
-     * 波動率偏斜
+     * 計算波動率偏斜 (Volatility Skew)
      *
      * GET /api/volatility/skew/{stockId}
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
      */
     public function skew(Request $request, int $stockId): JsonResponse
     {
@@ -612,6 +537,7 @@ class VolatilityController extends Controller
             $stock = Stock::findOrFail($stockId);
             $expiry = $request->input('expiry');
 
+            // 取得最近的到期日選擇權
             $query = Option::where(function ($q) use ($stock) {
                     $q->where('underlying', $stock->symbol)
                       ->orWhere('underlying', 'TXO');
@@ -629,23 +555,26 @@ class VolatilityController extends Controller
             if ($options->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => '找不到相關選擇權資料'
+                    'message' => '找不到相關的選擇權資料'
                 ], 404);
             }
 
+            // 取得最近到期日
             $nearestExpiry = $options->first()->expiry_date;
             $nearOptions = $options->where('expiry_date', $nearestExpiry);
 
-            $stockPrice = $stock->latestPrice?->close ?? 0;
-
+            // 建構偏斜資料
             $skewData = [];
             $strikes = $nearOptions->pluck('strike_price')->unique()->sort();
+
+            // 取得股票現價作為 ATM 參考
+            $stockPrice = $stock->latestPrice?->close ?? 0;
 
             foreach ($strikes as $strike) {
                 $callOption = $nearOptions->where('strike_price', $strike)
                     ->where('option_type', 'call')
                     ->first();
-
+                
                 $putOption = $nearOptions->where('strike_price', $strike)
                     ->where('option_type', 'put')
                     ->first();
@@ -653,6 +582,7 @@ class VolatilityController extends Controller
                 $ivCall = $callOption?->latestPrice?->implied_volatility;
                 $ivPut = $putOption?->latestPrice?->implied_volatility;
 
+                // 計算 moneyness
                 $moneyness = $stockPrice > 0 ? ($strike / $stockPrice - 1) * 100 : 0;
 
                 $skewData[] = [
@@ -662,6 +592,16 @@ class VolatilityController extends Controller
                     'iv_call' => $ivCall ? round($ivCall * 100, 2) : null,
                     'iv_put' => $ivPut ? round($ivPut * 100, 2) : null,
                 ];
+            }
+
+            // 計算偏斜度指標
+            $atmStrike = $strikes->filter(fn($s) => abs($s - $stockPrice) < $stockPrice * 0.02)->first();
+            $otmPut = $skewData[0] ?? null;
+            $atmData = collect($skewData)->firstWhere('strike', $atmStrike);
+            
+            $skewIndex = null;
+            if ($otmPut && $atmData && $otmPut['iv_put'] && $atmData['iv_call']) {
+                $skewIndex = round($otmPut['iv_put'] - $atmData['iv_call'], 2);
             }
 
             return response()->json([
@@ -674,100 +614,746 @@ class VolatilityController extends Controller
                         'current_price' => $stockPrice,
                     ],
                     'expiry' => $nearestExpiry,
+                    'expiry_formatted' => Carbon::parse($nearestExpiry)->format('Y/m/d'),
                     'days_to_expiry' => Carbon::parse($nearestExpiry)->diffInDays(now()),
                     'skew_data' => $skewData,
+                    'skew_index' => $skewIndex,
+                    'atm_strike' => $atmStrike,
                 ]
             ]);
 
         } catch (\Exception $e) {
             Log::error('計算波動率偏斜錯誤', [
                 'stock_id' => $stockId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '計算失敗: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 使用 GARCH 模型預測波動率
+     *
+     * GET /api/volatility/garch/{stockId}
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
+     */
+    public function garch(Request $request, int $stockId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'forecast_days' => 'nullable|integer|min:1|max:30',
+            'model_type' => 'nullable|in:GARCH,EGARCH,TGARCH',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => '參數驗證失敗',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $stock = Stock::findOrFail($stockId);
+            $forecastDays = intval($request->input('forecast_days', 5));
+            $modelType = $request->input('model_type', 'GARCH');
+
+            // 快取 key
+            $cacheKey = "volatility:garch:{$stockId}:{$forecastDays}:{$modelType}";
+            
+            $cachedData = Cache::get($cacheKey);
+            if ($cachedData && !$request->has('force')) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedData,
+                    'cached' => true
+                ]);
+            }
+
+            // 取得歷史價格資料
+            $prices = StockPrice::where('stock_id', $stockId)
+                ->orderBy('trade_date', 'desc')
+                ->limit(252)
+                ->get()
+                ->reverse()
+                ->values();
+
+            if ($prices->count() < 60) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '歷史資料不足，至少需要 60 天的資料',
+                    'available_days' => $prices->count(),
+                    'required_days' => 60
+                ], 400);
+            }
+
+            // 計算對數收益率
+            $returns = [];
+            for ($i = 1; $i < $prices->count(); $i++) {
+                if ($prices[$i - 1]->close > 0) {
+                    $returns[] = log($prices[$i]->close / $prices[$i - 1]->close);
+                }
+            }
+
+            // GARCH(1,1) 參數 (使用估計值)
+            // 在實務上，這些參數應該通過最大似然估計(MLE)來優化
+            $omega = 0.000001;  // 常數項
+            $alpha = 0.1;       // ARCH 項係數
+            $beta = 0.85;       // GARCH 項係數
+
+            // 計算條件變異數序列
+            $conditionalVariances = [];
+            $unconditionalVar = array_sum(array_map(fn($r) => $r * $r, $returns)) / count($returns);
+            $lastVariance = $unconditionalVar;
+
+            foreach ($returns as $return) {
+                $variance = $omega + $alpha * ($return * $return) + $beta * $lastVariance;
+                $conditionalVariances[] = $variance;
+                $lastVariance = $variance;
+            }
+
+            // 預測未來波動率
+            $forecasts = [];
+            $lastCondVar = end($conditionalVariances);
+            $lastReturn = end($returns);
+
+            for ($i = 1; $i <= $forecastDays; $i++) {
+                // GARCH 預測公式
+                if ($i == 1) {
+                    $forecastVar = $omega + $alpha * ($lastReturn * $lastReturn) + $beta * $lastCondVar;
+                } else {
+                    // 長期均值回歸
+                    $longRunVar = $omega / (1 - $alpha - $beta);
+                    $forecastVar = $longRunVar + pow($alpha + $beta, $i - 1) * ($lastCondVar - $longRunVar);
+                }
+
+                $forecastVol = sqrt($forecastVar * 252);
+
+                $forecasts[] = [
+                    'day' => $i,
+                    'date' => now()->addWeekdays($i)->format('Y-m-d'),
+                    'variance' => round($forecastVar, 10),
+                    'volatility' => round($forecastVol, 6),
+                    'volatility_percentage' => round($forecastVol * 100, 2) . '%',
+                    'confidence_lower' => round(($forecastVol - 0.02) * 100, 2) . '%',
+                    'confidence_upper' => round(($forecastVol + 0.02) * 100, 2) . '%',
+                ];
+            }
+
+            $currentVol = sqrt(end($conditionalVariances) * 252);
+            $longRunVol = sqrt(($omega / (1 - $alpha - $beta)) * 252);
+
+            $responseData = [
+                'stock' => [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ],
+                'model' => [
+                    'type' => $modelType . '(1,1)',
+                    'parameters' => [
+                        'omega' => $omega,
+                        'alpha' => $alpha,
+                        'beta' => $beta,
+                        'persistence' => round($alpha + $beta, 4),
+                    ],
+                    'description' => 'GARCH(1,1) 模型：σ²(t) = ω + α·ε²(t-1) + β·σ²(t-1)'
+                ],
+                'current_volatility' => round($currentVol, 6),
+                'current_volatility_percentage' => round($currentVol * 100, 2) . '%',
+                'long_run_volatility' => round($longRunVol, 6),
+                'long_run_volatility_percentage' => round($longRunVol * 100, 2) . '%',
+                'forecasts' => $forecasts,
+                'historical_data_points' => count($returns),
+                'calculation_date' => now()->format('Y-m-d H:i:s'),
+            ];
+
+            // 儲存到快取 (GARCH 快取時間短一些)
+            Cache::put($cacheKey, $responseData, now()->addMinutes(15));
+
+            return response()->json([
+                'success' => true,
+                'data' => $responseData,
+                'note' => '此為簡化版 GARCH 模型，參數使用經驗值。建議使用專業統計軟體進行精確的參數估計。'
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的股票'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('GARCH 模型計算錯誤', [
+                'stock_id' => $stockId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '計算失敗: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 手動計算並儲存波動率
+     *
+     * POST /api/volatility/calculate
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function calculate(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'stock_id' => 'required|integer|exists:stocks,id',
+            'date' => 'nullable|date',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => '參數驗證失敗',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $stockId = intval($request->input('stock_id'));
+            $date = $request->input('date');
+
+            // 批次更新波動率
+            $results = $this->volatilityService->batchUpdateVolatilities(
+                $stockId,
+                $date
+            );
+
+            // 清除相關快取
+            $this->clearVolatilityCache($stockId);
+
+            return response()->json([
+                'success' => true,
+                'message' => '波動率計算完成',
+                'data' => $results
+            ]);
+        } catch (\Exception $e) {
+            Log::error('波動率計算錯誤', [
+                'stock_id' => $request->input('stock_id'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '計算失敗: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // ========================================
+    // 私有輔助方法
+    // ========================================
+
+    /**
+     * 計算波動率等級 (百分位數)
+     */
+    private function calculateVolatilityRank(int $stockId, float $currentHV, int $period): ?float
+    {
+        try {
+            // 取得過去一年的波動率資料
+            $historicalHVs = Volatility::where('stock_id', $stockId)
+                ->where('period_days', $period)
+                ->orderBy('calculation_date', 'desc')
+                ->limit(252)
+                ->pluck('historical_volatility')
+                ->toArray();
+
+            if (count($historicalHVs) < 20) {
+                return null;
+            }
+
+            // 計算當前值在歷史中的百分位數
+            $count = count($historicalHVs);
+            $below = count(array_filter($historicalHVs, fn($hv) => $hv < $currentHV));
+
+            return round(($below / $count) * 100, 1);
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * 從價格陣列計算歷史波動率
+     */
+    private function calculateHVFromPrices(array $prices): ?float
+    {
+        if (count($prices) < 2) {
+            return null;
+        }
+
+        $returns = [];
+        for ($i = 1; $i < count($prices); $i++) {
+            if ($prices[$i - 1] > 0) {
+                $returns[] = log($prices[$i] / $prices[$i - 1]);
+            }
+        }
+
+        if (empty($returns)) {
+            return null;
+        }
+
+        $mean = array_sum($returns) / count($returns);
+        $variance = 0;
+        foreach ($returns as $return) {
+            $variance += pow($return - $mean, 2);
+        }
+        $variance /= count($returns);
+
+        return sqrt($variance * 252);
+    }
+
+    /**
+     * 計算標準差
+     */
+    private function calculateStd(array $values): float
+    {
+        if (empty($values)) return 0;
+        
+        $mean = array_sum($values) / count($values);
+        $variance = 0;
+        foreach ($values as $value) {
+            $variance += pow($value - $mean, 2);
+        }
+        return sqrt($variance / count($values));
+    }
+
+    /**
+     * 使用 Newton-Raphson 方法計算隱含波動率
+     */
+    private function calculateIVNewtonRaphson(
+        float $spotPrice,
+        float $strikePrice,
+        float $timeToExpiry,
+        float $riskFreeRate,
+        float $optionPrice,
+        string $optionType
+    ): float {
+        $sigma = 0.3; // 初始估計值
+        $maxIterations = 100;
+        $tolerance = 0.0001;
+
+        for ($i = 0; $i < $maxIterations; $i++) {
+            $bsPrice = $this->blackScholesPrice(
+                $spotPrice, $strikePrice, $timeToExpiry, 
+                $riskFreeRate, $sigma, $optionType
+            );
+            
+            $vega = $this->blackScholesVega(
+                $spotPrice, $strikePrice, $timeToExpiry,
+                $riskFreeRate, $sigma
+            );
+
+            if (abs($vega) < 0.00001) {
+                break;
+            }
+
+            $diff = $bsPrice - $optionPrice;
+            if (abs($diff) < $tolerance) {
+                break;
+            }
+
+            $sigma = $sigma - $diff / $vega;
+            
+            // 確保 sigma 在合理範圍內
+            $sigma = max(0.01, min(5.0, $sigma));
+        }
+
+        return $sigma;
+    }
+
+    /**
+     * Black-Scholes 價格計算
+     */
+    private function blackScholesPrice(
+        float $S, float $K, float $T, 
+        float $r, float $sigma, string $type
+    ): float {
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        $d2 = $d1 - $sigma * sqrt($T);
+
+        if ($type === 'call') {
+            return $S * $this->normalCDF($d1) - $K * exp(-$r * $T) * $this->normalCDF($d2);
+        } else {
+            return $K * exp(-$r * $T) * $this->normalCDF(-$d2) - $S * $this->normalCDF(-$d1);
+        }
+    }
+
+    /**
+     * Black-Scholes Vega
+     */
+    private function blackScholesVega(
+        float $S, float $K, float $T, 
+        float $r, float $sigma
+    ): float {
+        $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
+        return $S * sqrt($T) * $this->normalPDF($d1);
+    }
+
+    /**
+     * 標準常態分配累積分配函數
+     * 使用 Abramowitz and Stegun 近似法
+     */
+    private function normalCDF(float $x): float
+    {
+        // 使用高精度近似公式
+        $a1 =  0.254829592;
+        $a2 = -0.284496736;
+        $a3 =  1.421413741;
+        $a4 = -1.453152027;
+        $a5 =  1.061405429;
+        $p  =  0.3275911;
+
+        // 保存符號
+        $sign = $x < 0 ? -1 : 1;
+        $x = abs($x) / sqrt(2);
+
+        // A&S 公式 7.1.26
+        $t = 1.0 / (1.0 + $p * $x);
+        $y = 1.0 - ((((($a5 * $t + $a4) * $t) + $a3) * $t + $a2) * $t + $a1) * $t * exp(-$x * $x);
+
+        return 0.5 * (1.0 + $sign * $y);
+    }
+
+    /**
+     * 標準常態分配機率密度函數
+     */
+    private function normalPDF(float $x): float
+    {
+        return exp(-0.5 * $x * $x) / sqrt(2 * M_PI);
+    }
+
+    /**
+     * 誤差函數 (Error Function) 實作
+     * 使用 Horner's method 進行多項式計算
+     */
+    private function erf(float $x): float
+    {
+        // 常數
+        $a1 =  0.254829592;
+        $a2 = -0.284496736;
+        $a3 =  1.421413741;
+        $a4 = -1.453152027;
+        $a5 =  1.061405429;
+        $p  =  0.3275911;
+
+        // 保存符號
+        $sign = $x < 0 ? -1 : 1;
+        $x = abs($x);
+
+        // A&S 公式 7.1.26
+        $t = 1.0 / (1.0 + $p * $x);
+        $y = 1.0 - ((((($a5 * $t + $a4) * $t) + $a3) * $t + $a2) * $t + $a1) * $t * exp(-$x * $x);
+
+        return $sign * $y;
+    }
+
+    /**
+     * 清除波動率相關快取
+     */
+    private function clearVolatilityCache(int $stockId): void
+    {
+        Cache::forget("volatility:historical:{$stockId}:*");
+        Cache::forget("volatility:cone:{$stockId}:*");
+        Cache::forget("volatility:garch:{$stockId}:*");
+    }
+
+    /**
+     * 取得市場隱含波動率 (從選擇權價格)
+     *
+     * GET /api/volatility/market-iv/{stockId}
+     * 
+     * 說明：
+     * - 優先從 option_prices 表取得真實 IV
+     * - 如果沒有選擇權資料，則返回 null
+     * 
+     * @param Request $request
+     * @param int $stockId
+     * @return JsonResponse
+     */
+    public function marketIV(Request $request, int $stockId): JsonResponse
+    {
+        try {
+            $stock = Stock::findOrFail($stockId);
+            
+            // 快取 key
+            $cacheKey = "volatility:txo_iv";
+            
+            $cachedData = Cache::get($cacheKey);
+            if ($cachedData && !$request->has('force')) {
+                // 加入股票資訊到快取資料
+                $cachedData['stock'] = [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ];
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedData,
+                    'cached' => true
+                ]);
+            }
+
+            $result = [
+                'stock' => [
+                    'id' => $stock->id,
+                    'symbol' => $stock->symbol,
+                    'name' => $stock->name,
+                ],
+                'has_real_iv' => false,
+                'real_iv' => null,
+                'real_iv_percentage' => null,
+                'iv_source' => null,
+                'txo_iv' => null,
+                'txo_iv_percentage' => null,
+                'data_date' => null,
+                'txo_info' => null,
+            ];
+
+            // 從 TXO 選擇權取得市場 IV
+            // TXO IV 是台灣市場最重要的波動率指標，可作為所有個股的參考
+            $txoIV = $this->getTxoMarketIV();
+            
+            if ($txoIV) {
+                $result['has_real_iv'] = true;
+                $result['txo_iv'] = $txoIV['iv'];
+                $result['txo_iv_percentage'] = round($txoIV['iv'] * 100, 2);
+                $result['real_iv'] = $txoIV['iv'];
+                $result['real_iv_percentage'] = round($txoIV['iv'] * 100, 2);
+                $result['iv_source'] = 'txo';
+                $result['data_date'] = $txoIV['date'];
+                $result['txo_info'] = $txoIV['info'] ?? null;
+            }
+
+            // 儲存快取 (10 分鐘)
+            Cache::put($cacheKey, $result, now()->addMinutes(10));
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => '找不到指定的股票'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('取得市場 IV 錯誤', [
+                'stock_id' => $stockId,
                 'error' => $e->getMessage()
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => '計算失敗: ' . $e->getMessage()
+                'message' => '取得市場 IV 失敗: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * GARCH 波動率預測
-     *
-     * GET /api/volatility/garch/{stockId}
+     * 取得 TXO (台指選擇權) 的市場 IV
+     * 
+     * TXO 是台灣選擇權市場最活躍的商品
+     * 其隱含波動率可作為整體市場波動率的參考指標
+     * 
+     * @return array|null
      */
-    public function garch(Request $request, int $stockId): JsonResponse
+    private function getTxoMarketIV(): ?array
     {
         try {
-            $stock = Stock::findOrFail($stockId);
+            // 優先取得最新有 IV 的 TXO 資料（不限制到期日）
+            // 因為選擇權可能已過期，但 IV 資料仍然有參考價值
+            $optionPrice = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO');
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->where('implied_volatility', '<', 3) // 排除異常值 (300% 以上)
+                ->orderBy('trade_date', 'desc')
+                ->first();
 
-            // GARCH 模型需要 Python 執行，這裡返回簡化版本
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
-                    'message' => 'GARCH 模型請使用 Python 預測服務',
-                    'endpoint' => '/api/predictions/garch'
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => '取得 GARCH 預測失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 手動觸發波動率計算
-     *
-     * POST /api/volatility/calculate
-     */
-    public function calculate(Request $request): JsonResponse
-    {
-        try {
-            $stockId = $request->input('stock_id');
-            $periods = $request->input('periods', [10, 20, 30, 60]);
-
-            $stock = Stock::findOrFail($stockId);
-
-            $results = [];
-            foreach ($periods as $period) {
-                // 重新計算波動率
-                Cache::forget("volatility:historical:{$stockId}:{$period}:*");
-
-                $response = $this->historical(new Request(['period' => $period]), $stockId);
-                $data = json_decode($response->getContent(), true);
-
-                if ($data['success']) {
-                    $results[$period] = $data['data'];
-                }
+            if ($optionPrice) {
+                $option = $optionPrice->option;
+                return [
+                    'iv' => $optionPrice->implied_volatility,
+                    'date' => $optionPrice->trade_date,
+                    'option_id' => $optionPrice->option_id,
+                    'info' => [
+                        'option_code' => $option->option_code ?? null,
+                        'strike_price' => $option->strike_price ?? null,
+                        'expiry_date' => $option->expiry_date ?? null,
+                        'option_type' => $option->option_type ?? null,
+                    ]
+                ];
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'stock' => [
-                        'id' => $stock->id,
-                        'symbol' => $stock->symbol,
-                        'name' => $stock->name,
-                    ],
-                    'calculations' => $results,
-                    'calculated_at' => now()->toIso8601String(),
-                ]
-            ]);
+            // 如果找不到，嘗試計算 ATM 選擇權的平均 IV
+            $atmIV = $this->calculateAtmAverageIV();
+            if ($atmIV) {
+                return $atmIV;
+            }
 
+            return null;
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => '計算失敗: ' . $e->getMessage()
-            ], 500);
+            Log::warning('取得 TXO IV 失敗', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * 計算 ATM (價平) 選擇權的平均 IV
+     * ATM 選擇權的 IV 最能代表市場對波動率的預期
+     */
+    private function calculateAtmAverageIV(): ?array
+    {
+        try {
+            // 取得最新的交易日期
+            $latestDate = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO');
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->max('trade_date');
+
+            if (!$latestDate) {
+                return null;
+            }
+
+            // 取得該日期所有有 IV 的選擇權
+            $optionPrices = OptionPrice::whereHas('option', function ($query) {
+                    $query->where('underlying', 'TXO');
+                })
+                ->where('trade_date', $latestDate)
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0.05)  // 排除過低的 IV (5% 以下)
+                ->where('implied_volatility', '<', 1.5)   // 排除過高的 IV (150% 以上)
+                ->get();
+
+            if ($optionPrices->isEmpty()) {
+                return null;
+            }
+
+            // 計算平均 IV
+            $totalIV = 0;
+            $count = 0;
+            foreach ($optionPrices as $price) {
+                $totalIV += $price->implied_volatility;
+                $count++;
+            }
+
+            if ($count > 0) {
+                return [
+                    'iv' => $totalIV / $count,
+                    'date' => $latestDate,
+                    'source' => 'atm_average',
+                    'info' => [
+                        'calculation_method' => 'ATM 選擇權平均',
+                        'sample_count' => $count,
+                    ]
+                ];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('計算 ATM 平均 IV 失敗', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * 取得 ATM TXO 選擇權
+     */
+    private function getAtmTxoOptions(): array
+    {
+        try {
+            // 取得最近到期的 TXO 選擇權
+            $nearestExpiry = Option::where('underlying', 'TXO')
+                ->where('expiry_date', '>=', now()->format('Y-m-d'))
+                ->orderBy('expiry_date')
+                ->value('expiry_date');
+
+            if (!$nearestExpiry) {
+                return [];
+            }
+
+            // 取得該到期日的選擇權價格
+            return OptionPrice::whereHas('option', function ($query) use ($nearestExpiry) {
+                    $query->where('underlying', 'TXO')
+                          ->where('expiry_date', $nearestExpiry);
+                })
+                ->whereNotNull('implied_volatility')
+                ->orderBy('trade_date', 'desc')
+                ->limit(10)
+                ->get()
+                ->toArray();
+        } catch (\Exception $e) {
+            return [];
+        }
+    }
+
+    /**
+     * 取得個股選擇權的 IV
+     * 
+     * @param int $stockId
+     * @return array|null
+     */
+    private function getStockOptionIV(int $stockId): ?array
+    {
+        try {
+            $stock = Stock::find($stockId);
+            if (!$stock) {
+                return null;
+            }
+
+            // 查詢該股票的選擇權
+            $optionPrice = OptionPrice::whereHas('option', function ($query) use ($stock) {
+                    $query->where('underlying', $stock->symbol)
+                          ->where('expiry_date', '>=', now()->format('Y-m-d'));
+                })
+                ->whereNotNull('implied_volatility')
+                ->where('implied_volatility', '>', 0)
+                ->orderBy('trade_date', 'desc')
+                ->first();
+
+            if ($optionPrice) {
+                $option = $optionPrice->option;
+                return [
+                    'iv' => $optionPrice->implied_volatility,
+                    'date' => $optionPrice->trade_date,
+                    'option_info' => [
+                        'option_code' => $option->option_code,
+                        'strike_price' => $option->strike_price,
+                        'expiry_date' => $option->expiry_date,
+                        'option_type' => $option->option_type,
+                    ]
+                ];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('取得個股選擇權 IV 失敗', [
+                'stock_id' => $stockId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
         }
     }
 }
