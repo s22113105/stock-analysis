@@ -1,6 +1,5 @@
 <template>
   <div class="realtime-page">
-    <!-- 連線狀態 -->
     <v-alert
       :type="connectionStatus === 'connected' ? 'success' : 'warning'"
       variant="tonal"
@@ -18,7 +17,6 @@
     </v-alert>
 
     <v-row>
-      <!-- 自選股票監控 -->
       <v-col cols="12" md="8">
         <v-card elevation="2">
           <v-card-title>
@@ -32,7 +30,6 @@
           </v-card-title>
 
           <v-card-text>
-            <!-- 表格視圖 -->
             <v-data-table
               v-if="viewMode === 'table'"
               :headers="headers"
@@ -63,7 +60,7 @@
                   <span>{{ formatVolume(item.volume) }}</span>
                   <v-progress-linear
                     :model-value="(item.volume / item.avgVolume) * 100"
-                    :color="item.volume > item.avgVolume ? 'success' : 'grey'"
+                    :color="item.volume > item.avgVolume ? 'red' : 'grey'"
                     height="4"
                     class="ml-2"
                     style="width: 50px;"
@@ -78,7 +75,6 @@
               </template>
             </v-data-table>
 
-            <!-- 卡片視圖 -->
             <v-row v-else>
               <v-col v-for="stock in watchlist" :key="stock.symbol" cols="12" md="6" lg="4">
                 <v-card :class="{'pulse': stock.justUpdated}" outlined>
@@ -91,7 +87,7 @@
                       <v-chip :color="stock.change >= 0 ? 'red' : 'green'">
                         {{ stock.change >= 0 ? '+' : '' }}{{ stock.change }}%
                       </v-chip>
-                      </div>
+                    </div>
                     <div class="text-h4 my-2" :class="getPriceClass(stock.change)">
                       ${{ stock.price }}
                     </div>
@@ -108,9 +104,7 @@
         </v-card>
       </v-col>
 
-      <!-- 右側面板 -->
       <v-col cols="12" md="4">
-        <!-- 市場動態 -->
         <v-card elevation="2" class="mb-4">
           <v-card-title>
             <v-icon class="mr-2">mdi-view-dashboard-variant</v-icon>
@@ -153,7 +147,6 @@
           </v-card-text>
         </v-card>
 
-        <!-- 即時警示 -->
         <v-card elevation="2">
           <v-card-title>
             <v-icon class="mr-2">mdi-bell-alert</v-icon>
@@ -193,7 +186,6 @@
       </v-col>
     </v-row>
 
-    <!-- 即時走勢圖 -->
     <v-row class="mt-4">
       <v-col cols="12">
         <v-card elevation="2">
@@ -281,6 +273,7 @@ export default {
       return volume.toLocaleString()
     }
 
+    // 確保使用 text-red 和 text-green
     const getPriceClass = (change) => {
       if (change > 0) return 'text-red'
       if (change < 0) return 'text-green'
@@ -340,8 +333,8 @@ export default {
             datasets: [{
               label: '台積電 (2330)',
               data: Array.from({ length: 50 }, () => 595 + (Math.random() - 0.5) * 10),
-              borderColor: 'rgb(75, 192, 192)',
-              backgroundColor: 'rgba(75, 192, 192, 0.1)',
+              borderColor: 'rgb(244, 67, 54)', // 改為紅色線條
+              backgroundColor: 'rgba(244, 67, 54, 0.1)',
               fill: true,
               tension: 0.1
             }]
@@ -427,5 +420,14 @@ export default {
   100% {
     box-shadow: 0 0 0 10px rgba(75, 192, 192, 0);
   }
+}
+
+/* 強制自定義紅綠文字顏色，避免被預設樣式覆蓋 */
+.text-red {
+  color: rgb(244, 67, 54) !important;
+}
+
+.text-green {
+  color: rgb(76, 175, 80) !important;
 }
 </style>
