@@ -52,7 +52,7 @@
               </template>
 
               <template v-slot:item.change="{ item }">
-                <v-chip :color="item.change >= 0 ? 'success' : 'error'" size="small">
+                <v-chip :color="item.change >= 0 ? 'red' : 'green'" size="small">
                   <v-icon start>{{ item.change >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
                   {{ item.change >= 0 ? '+' : '' }}{{ item.change }}%
                 </v-chip>
@@ -88,10 +88,10 @@
                         <div class="text-h6">{{ stock.symbol }}</div>
                         <div class="text-caption text-grey">{{ stock.name }}</div>
                       </div>
-                      <v-chip :color="stock.change >= 0 ? 'success' : 'error'">
+                      <v-chip :color="stock.change >= 0 ? 'red' : 'green'">
                         {{ stock.change >= 0 ? '+' : '' }}{{ stock.change }}%
                       </v-chip>
-                    </div>
+                      </div>
                     <div class="text-h4 my-2" :class="getPriceClass(stock.change)">
                       ${{ stock.price }}
                     </div>
@@ -121,7 +121,7 @@
               <v-list-item>
                 <v-list-item-title>加權指數</v-list-item-title>
                 <template v-slot:append>
-                  <div :class="marketIndex.change >= 0 ? 'text-success' : 'text-error'">
+                  <div :class="marketIndex.change >= 0 ? 'text-red' : 'text-green'">
                     {{ marketIndex.value }}
                     <v-icon>{{ marketIndex.change >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
                     {{ Math.abs(marketIndex.change) }}%
@@ -132,14 +132,14 @@
               <v-list-item>
                 <v-list-item-title>上漲家數</v-list-item-title>
                 <template v-slot:append>
-                  <span class="text-success">{{ marketStats.up }}</span>
+                  <span class="text-red">{{ marketStats.up }}</span>
                 </template>
               </v-list-item>
 
               <v-list-item>
                 <v-list-item-title>下跌家數</v-list-item-title>
                 <template v-slot:append>
-                  <span class="text-error">{{ marketStats.down }}</span>
+                  <span class="text-green">{{ marketStats.down }}</span>
                 </template>
               </v-list-item>
 
@@ -282,8 +282,8 @@ export default {
     }
 
     const getPriceClass = (change) => {
-      if (change > 0) return 'text-success'
-      if (change < 0) return 'text-error'
+      if (change > 0) return 'text-red'
+      if (change < 0) return 'text-green'
       return ''
     }
 

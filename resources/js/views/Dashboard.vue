@@ -50,7 +50,7 @@
               <v-chip
                 v-for="stock in topStocks"
                 :key="stock.symbol"
-                :color="stock.change_percent >= 0 ? 'success' : 'error'"
+                :color="stock.change_percent >= 0 ? 'red' : 'green'"
                 size="small"
                 class="ma-1"
               >

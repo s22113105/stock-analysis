@@ -153,7 +153,7 @@
     <!-- 快速統計 (保持不變) -->
     <v-row class="mt-4">
       <v-col cols="12" md="3">
-        <v-card color="success" dark elevation="2">
+        <v-card color="red" dark elevation="2">
           <v-card-text>
             <div class="d-flex align-center">
               <v-icon size="48" class="mr-3">mdi-arrow-up-thick</v-icon>
@@ -166,7 +166,7 @@
         </v-card>
       </v-col>
       <v-col cols="12" md="3">
-        <v-card color="error" dark elevation="2">
+        <v-card color="green" dark elevation="2">
           <v-card-text>
             <div class="d-flex align-center">
               <v-icon size="48" class="mr-3">mdi-arrow-down-thick</v-icon>
@@ -484,8 +484,8 @@ export default {
      * 取得漲跌顏色
      */
     const getChangeColor = (change) => {
-      if (change > 0) return 'success'
-      if (change < 0) return 'error'
+      if (change > 0) return 'red'
+      if (change < 0) return 'green'
       return 'grey'
     }
 
@@ -493,8 +493,8 @@ export default {
      * 取得價格文字顏色類別
      */
     const getPriceTextClass = (change) => {
-      if (change > 0) return 'text-success'
-      if (change < 0) return 'text-error'
+      if (change > 0) return 'text-red'
+      if (change < 0) return 'text-green'
       return 'text-grey'
     }
 
@@ -577,15 +577,15 @@ export default {
   padding: 16px;
 }
 
-.text-success {
-  color: rgb(76, 175, 80);
+.text-red {
+  color: rgb(244, 67, 54) !important;
 }
 
-.text-error {
-  color: rgb(244, 67, 54);
+.text-green {
+  color: rgb(76, 175, 80) !important;
 }
 
 .text-grey {
-  color: rgb(158, 158, 158);
+  color: rgb(158, 158, 158) !important;
 }
 </style>
