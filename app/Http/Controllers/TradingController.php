@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\Position;
+use App\Models\TradeHistory;
 use App\Models\Stock;
-use App\Models\Option;
+use App\Models\StockPrice;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -15,11 +17,18 @@ use Carbon\Carbon;
 /**
  * 交易管理 API 控制器
  *
- * 處理持倉、訂單等交易相關功能
+ * 處理持倉、交易歷史、帳戶等功能
  * 注意：此為模擬交易系統，實際交易請對接券商 API
  */
 class TradingController extends Controller
 {
+    // ==========================================
+    // 手續費/稅率設定
+    // ==========================================
+    private const COMMISSION_RATE   = 0.001425; // 0.1425%
+    private const STOCK_TAX_RATE    = 0.003;    // 0.3% (賣出)
+    private const OPTION_COMMISSION = 50;        // 選擇權每口固定 $50
+
     /**
      * 取得持倉列表
      *
@@ -28,335 +37,69 @@ class TradingController extends Controller
     public function positions(Request $request): JsonResponse
     {
         try {
-            $userId = $request->user()->id ?? 1; // 臨時使用固定 ID
+            $userId = $request->user()->id;
 
-            // 從資料庫或快取取得持倉資料
-            // 實際專案中應該有 positions 資料表
-            $positions = [
-                [
-                    'id' => 1,
-                    'symbol' => '2330',
-                    'name' => '台積電',
-                    'type' => 'stock',
-                    'quantity' => 1000,
-                    'avg_price' => 585.0,
-                    'current_price' => 615.0,
-                    'market_value' => 615000,
-                    'cost' => 585000,
-                    'unrealized_pnl' => 30000,
-                    'unrealized_pnl_percent' => 5.13,
-                    'updated_at' => now()->toIso8601String(),
-                ],
-                [
-                    'id' => 2,
-                    'symbol' => 'TXO_2025_01_C_20000',
-                    'name' => '台指選擇權 買權 20000',
-                    'type' => 'option',
-                    'quantity' => 5,
-                    'avg_price' => 250.0,
-                    'current_price' => 320.0,
-                    'market_value' => 80000,
-                    'cost' => 62500,
-                    'unrealized_pnl' => 17500,
-                    'unrealized_pnl_percent' => 28.0,
-                    'expiry_date' => '2025-01-15',
-                    'updated_at' => now()->toIso8601String(),
-                ],
-            ];
+            // 從 positions 資料表查詢有效持倉，並補上最新市價
+            $positions = Position::where('user_id', $userId)
+                ->active()
+                ->orderBy('type')
+                ->orderBy('symbol')
+                ->get()
+                ->map(function (Position $pos) {
+                    // 嘗試從 stock_prices 取得最新收盤價更新市值
+                    if ($pos->type === 'stock') {
+                        $latestPrice = StockPrice::whereHas('stock', fn($q) => $q->where('symbol', $pos->symbol))
+                            ->orderBy('trade_date', 'desc')
+                            ->value('close');
 
-            // 計算總損益
-            $totalValue = array_sum(array_column($positions, 'market_value'));
-            $totalCost = array_sum(array_column($positions, 'cost'));
-            $totalPnl = $totalValue - $totalCost;
-            $totalPnlPercent = ($totalPnl / $totalCost) * 100;
+                        if ($latestPrice) {
+                            $pos->refreshPnl((float) $latestPrice);
+                        }
+                    }
+
+                    return [
+                        'id'                      => $pos->id,
+                        'symbol'                  => $pos->symbol,
+                        'name'                    => $pos->name,
+                        'type'                    => $pos->type,
+                        'quantity'                => $pos->quantity,
+                        'avg_price'               => (float) $pos->avg_price,
+                        'current_price'           => (float) $pos->current_price,
+                        'market_value'            => (float) $pos->market_value,
+                        'cost'                    => (float) $pos->cost,
+                        'unrealized_pnl'          => (float) $pos->unrealized_pnl,
+                        'unrealized_pnl_percent'  => (float) $pos->unrealized_pnl_percent,
+                        'expiry_date'             => $pos->expiry_date?->toDateString(),
+                        'updated_at'              => $pos->updated_at->toIso8601String(),
+                    ];
+                });
+
+            // 彙總
+            $totalValue   = $positions->sum('market_value');
+            $totalCost    = $positions->sum('cost');
+            $totalPnl     = $totalValue - $totalCost;
+            $totalPnlPct  = $totalCost > 0 ? ($totalPnl / $totalCost) * 100 : 0;
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'positions' => $positions,
-                    'summary' => [
-                        'total_positions' => count($positions),
-                        'total_market_value' => $totalValue,
-                        'total_cost' => $totalCost,
-                        'total_unrealized_pnl' => $totalPnl,
-                        'total_unrealized_pnl_percent' => round($totalPnlPercent, 2),
+                'data'    => [
+                    'positions' => $positions->values(),
+                    'summary'   => [
+                        'total_positions'         => $positions->count(),
+                        'total_market_value'      => round($totalValue, 2),
+                        'total_cost'              => round($totalCost, 2),
+                        'total_unrealized_pnl'    => round($totalPnl, 2),
+                        'total_unrealized_pnl_percent' => round($totalPnlPct, 2),
                     ],
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('取得持倉失敗', [
-                'error' => $e->getMessage()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => '取得資料失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 取得訂單列表
-     *
-     * GET /api/trading/orders
-     */
-    public function orders(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'status' => 'nullable|in:all,pending,filled,cancelled',
-            'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        try {
-            $userId = $request->user()->id ?? 1;
-            $status = $request->input('status', 'all');
-
-            // 模擬訂單資料
-            // 實際專案中應該有 orders 資料表
-            $orders = [
-                [
-                    'id' => 1,
-                    'order_type' => 'buy',
-                    'symbol' => '2330',
-                    'name' => '台積電',
-                    'quantity' => 1000,
-                    'price' => 585.0,
-                    'status' => 'filled',
-                    'filled_quantity' => 1000,
-                    'filled_price' => 585.0,
-                    'order_time' => now()->subDays(5)->toIso8601String(),
-                    'filled_time' => now()->subDays(5)->addHours(1)->toIso8601String(),
                 ],
-                [
-                    'id' => 2,
-                    'order_type' => 'buy',
-                    'symbol' => 'TXO_2025_01_C_20000',
-                    'name' => '台指選擇權 買權 20000',
-                    'quantity' => 5,
-                    'price' => 250.0,
-                    'status' => 'filled',
-                    'filled_quantity' => 5,
-                    'filled_price' => 250.0,
-                    'order_time' => now()->subDays(3)->toIso8601String(),
-                    'filled_time' => now()->subDays(3)->addHours(2)->toIso8601String(),
-                ],
-                [
-                    'id' => 3,
-                    'order_type' => 'sell',
-                    'symbol' => '2317',
-                    'name' => '鴻海',
-                    'quantity' => 2000,
-                    'price' => 105.0,
-                    'status' => 'pending',
-                    'filled_quantity' => 0,
-                    'filled_price' => null,
-                    'order_time' => now()->subHours(2)->toIso8601String(),
-                    'filled_time' => null,
-                ],
-            ];
-
-            // 根據狀態篩選
-            if ($status !== 'all') {
-                $orders = array_filter($orders, fn($order) => $order['status'] === $status);
-            }
-
-            // 根據日期篩選
-            if ($request->has('start_date')) {
-                $startDate = Carbon::parse($request->input('start_date'));
-                $orders = array_filter($orders, function ($order) use ($startDate) {
-                    return Carbon::parse($order['order_time'])->gte($startDate);
-                });
-            }
-
-            if ($request->has('end_date')) {
-                $endDate = Carbon::parse($request->input('end_date'));
-                $orders = array_filter($orders, function ($order) use ($endDate) {
-                    return Carbon::parse($order['order_time'])->lte($endDate);
-                });
-            }
-
-            $orders = array_values($orders); // 重新索引
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'orders' => $orders,
-                    'total' => count($orders),
-                ]
             ]);
 
         } catch (\Exception $e) {
-            Log::error('取得訂單失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('取得持倉失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => '取得資料失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 建立訂單
-     *
-     * POST /api/trading/orders
-     */
-    public function createOrder(Request $request): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'order_type' => 'required|in:buy,sell',
-            'symbol' => 'required|string',
-            'quantity' => 'required|integer|min:1',
-            'price' => 'required|numeric|min:0',
-            'order_method' => 'nullable|in:limit,market,stop_limit',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        try {
-            $userId = $request->user()->id ?? 1;
-
-            // 驗證股票/選擇權存在
-            $symbol = $request->input('symbol');
-            $asset = Stock::where('symbol', $symbol)->first();
-
-            if (!$asset) {
-                $asset = Option::where('option_code', $symbol)->first();
-            }
-
-            if (!$asset) {
-                return response()->json([
-                    'success' => false,
-                    'message' => '找不到該商品'
-                ], 404);
-            }
-
-            // 建立訂單 (實際應該儲存到資料庫)
-            $order = [
-                'id' => rand(1000, 9999),
-                'user_id' => $userId,
-                'order_type' => $request->input('order_type'),
-                'symbol' => $symbol,
-                'quantity' => $request->input('quantity'),
-                'price' => $request->input('price'),
-                'order_method' => $request->input('order_method', 'limit'),
-                'status' => 'pending',
-                'order_time' => now()->toIso8601String(),
-            ];
-
-            Log::info('訂單建立成功', $order);
-
-            return response()->json([
-                'success' => true,
-                'message' => '訂單建立成功',
-                'data' => $order
-            ], 201);
-
-        } catch (\Exception $e) {
-            Log::error('建立訂單失敗', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => '建立訂單失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 取消訂單
-     *
-     * DELETE /api/trading/orders/{id}
-     */
-    public function cancelOrder(Request $request, int $id): JsonResponse
-    {
-        try {
-            $userId = $request->user()->id ?? 1;
-
-            // 檢查訂單是否存在且屬於該用戶 (實際應該查詢資料庫)
-            // 這裡只是模擬
-
-            Log::info('取消訂單', [
-                'user_id' => $userId,
-                'order_id' => $id
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => '訂單已取消',
-                'data' => [
-                    'order_id' => $id,
-                    'status' => 'cancelled',
-                    'cancelled_at' => now()->toIso8601String(),
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('取消訂單失敗', [
-                'error' => $e->getMessage()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => '取消訂單失敗: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * 取得帳戶資訊
-     *
-     * GET /api/trading/account
-     */
-    public function account(Request $request): JsonResponse
-    {
-        try {
-            $userId = $request->user()->id ?? 1;
-
-            // 模擬帳戶資料 (實際應該從資料庫取得)
-            $account = [
-                'user_id' => $userId,
-                'balance' => 1000000, // 現金餘額
-                'buying_power' => 2000000, // 購買力
-                'margin_used' => 500000, // 已使用保證金
-                'total_assets' => 1500000, // 總資產
-                'total_equity' => 1500000, // 淨值
-                'maintenance_margin' => 300000, // 維持保證金
-                'updated_at' => now()->toIso8601String(),
-            ];
-
-            return response()->json([
-                'success' => true,
-                'data' => $account
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('取得帳戶資訊失敗', [
-                'error' => $e->getMessage()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => '取得資料失敗: ' . $e->getMessage()
+                'message' => '取得資料失敗: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -370,154 +113,265 @@ class TradingController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date',
-            'symbol' => 'nullable|string',
+            'end_date'   => 'nullable|date|after_or_equal:start_date',
+            'symbol'     => 'nullable|string|max:30',
+            'type'       => 'nullable|in:stock,option',
+            'order_type' => 'nullable|in:buy,sell',
+            'per_page'   => 'nullable|integer|min:1|max:200',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
+                'errors'  => $validator->errors(),
             ], 422);
         }
 
         try {
-            $userId = $request->user()->id ?? 1;
+            $userId  = $request->user()->id;
+            $perPage = $request->input('per_page', 50);
 
-            // 模擬交易歷史 (實際應該從資料庫取得)
-            $history = [
-                [
-                    'id' => 1,
-                    'date' => now()->subDays(5)->format('Y-m-d'),
-                    'order_type' => 'buy',
-                    'symbol' => '2330',
-                    'name' => '台積電',
-                    'quantity' => 1000,
-                    'price' => 585.0,
-                    'amount' => 585000,
-                    'commission' => 409.5,
-                    'tax' => 0,
-                    'net_amount' => 585409.5,
-                ],
-                [
-                    'id' => 2,
-                    'date' => now()->subDays(3)->format('Y-m-d'),
-                    'order_type' => 'buy',
-                    'symbol' => 'TXO_2025_01_C_20000',
-                    'name' => '台指選擇權',
-                    'quantity' => 5,
-                    'price' => 250.0,
-                    'amount' => 62500,
-                    'commission' => 50,
-                    'tax' => 5,
-                    'net_amount' => 62555,
-                ],
-            ];
+            $query = TradeHistory::where('user_id', $userId)
+                ->orderBy('trade_date', 'desc')
+                ->orderBy('id', 'desc');
 
-            // 篩選
-            if ($request->has('start_date')) {
-                $startDate = $request->input('start_date');
-                $history = array_filter($history, fn($h) => $h['date'] >= $startDate);
+            // 篩選條件
+            if ($request->filled('start_date')) {
+                $query->where('trade_date', '>=', $request->input('start_date'));
+            }
+            if ($request->filled('end_date')) {
+                $query->where('trade_date', '<=', $request->input('end_date'));
+            }
+            if ($request->filled('symbol')) {
+                $query->where('symbol', $request->input('symbol'));
+            }
+            if ($request->filled('type')) {
+                $query->where('type', $request->input('type'));
+            }
+            if ($request->filled('order_type')) {
+                $query->where('order_type', $request->input('order_type'));
             }
 
-            if ($request->has('end_date')) {
-                $endDate = $request->input('end_date');
-                $history = array_filter($history, fn($h) => $h['date'] <= $endDate);
-            }
+            $paginated = $query->paginate($perPage);
 
-            if ($request->has('symbol')) {
-                $symbol = $request->input('symbol');
-                $history = array_filter($history, fn($h) => $h['symbol'] === $symbol);
-            }
-
-            $history = array_values($history);
+            // 彙總實現損益
+            $totalRealizedPnl = TradeHistory::where('user_id', $userId)
+                ->whereNotNull('realized_pnl')
+                ->sum('realized_pnl');
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'history' => $history,
-                    'total' => count($history),
-                ]
+                'data'    => [
+                    'history'            => $paginated->items(),
+                    'total'              => $paginated->total(),
+                    'per_page'           => $paginated->perPage(),
+                    'current_page'       => $paginated->currentPage(),
+                    'last_page'          => $paginated->lastPage(),
+                    'total_realized_pnl' => round((float) $totalRealizedPnl, 2),
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('取得交易歷史失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('取得交易歷史失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => '取得資料失敗: ' . $e->getMessage()
+                'message' => '取得資料失敗: ' . $e->getMessage(),
             ], 500);
         }
     }
 
     /**
-     * 計算手續費和稅金
+     * 取得帳戶資訊
      *
-     * POST /api/trading/calculate-fees
+     * GET /api/trading/account
      */
-    public function calculateFees(Request $request): JsonResponse
+    public function account(Request $request): JsonResponse
+    {
+        try {
+            $userId = $request->user()->id;
+
+            // 從持倉計算總市值
+            $positions = Position::where('user_id', $userId)->active()->get();
+
+            $totalMarketValue = $positions->sum('market_value');
+            $totalCost        = $positions->sum('cost');
+            $totalUnrealizedPnl = $totalMarketValue - $totalCost;
+
+            // 從交易歷史計算實現損益
+            $totalRealizedPnl = TradeHistory::where('user_id', $userId)
+                ->whereNotNull('realized_pnl')
+                ->sum('realized_pnl');
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'user_id'             => $userId,
+                    'total_positions'     => $positions->count(),
+                    'total_market_value'  => round((float) $totalMarketValue, 2),
+                    'total_cost'          => round((float) $totalCost, 2),
+                    'total_unrealized_pnl'=> round((float) $totalUnrealizedPnl, 2),
+                    'total_realized_pnl'  => round((float) $totalRealizedPnl, 2),
+                    'updated_at'          => now()->toIso8601String(),
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('取得帳戶資訊失敗', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '取得資料失敗: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * 新增交易紀錄（模擬下單）
+     *
+     * POST /api/trading/order
+     */
+    public function order(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
+            'symbol'     => 'required|string|max:30',
+            'name'       => 'required|string|max:100',
+            'type'       => 'required|in:stock,option',
             'order_type' => 'required|in:buy,sell',
-            'symbol' => 'required|string',
-            'quantity' => 'required|integer|min:1',
-            'price' => 'required|numeric|min:0',
+            'quantity'   => 'required|integer|min:1',
+            'price'      => 'required|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => '參數驗證失敗',
-                'errors' => $validator->errors()
+                'errors'  => $validator->errors(),
             ], 422);
         }
 
+        DB::beginTransaction();
         try {
+            $userId    = $request->user()->id;
+            $symbol    = $request->input('symbol');
+            $name      = $request->input('name');
+            $type      = $request->input('type');
             $orderType = $request->input('order_type');
-            $quantity = $request->input('quantity');
-            $price = $request->input('price');
+            $quantity  = (int) $request->input('quantity');
+            $price     = (float) $request->input('price');
 
-            $amount = $quantity * $price;
-
-            // 手續費 (0.1425% 打折後)
-            $commissionRate = 0.001425 * 0.6; // 假設六折
-            $commission = $amount * $commissionRate;
-
-            // 證交稅 (賣出時才收，0.3%)
-            $taxRate = $orderType === 'sell' ? 0.003 : 0;
-            $tax = $amount * $taxRate;
-
-            $totalFees = $commission + $tax;
+            // 計算費用
+            $amount     = $price * $quantity;
+            $commission = $type === 'option'
+                ? self::OPTION_COMMISSION * $quantity
+                : ceil($amount * self::COMMISSION_RATE);
+            $tax = $orderType === 'sell' && $type === 'stock'
+                ? ceil($amount * self::STOCK_TAX_RATE)
+                : 0;
             $netAmount = $orderType === 'buy'
-                ? $amount + $totalFees
-                : $amount - $totalFees;
+                ? $amount + $commission + $tax
+                : $amount - $commission - $tax;
+
+            // ---- 更新持倉 ----
+            $position = Position::firstOrNew([
+                'user_id' => $userId,
+                'symbol'  => $symbol,
+                'type'    => $type,
+            ]);
+
+            $realizedPnl    = null;
+            $realizedPnlPct = null;
+
+            if ($orderType === 'buy') {
+                // 加倉：重新計算平均成本
+                $newQty      = ($position->quantity ?? 0) + $quantity;
+                $newCost     = ($position->cost ?? 0) + $amount;
+                $newAvgPrice = $newCost / $newQty;
+
+                $position->fill([
+                    'name'          => $name,
+                    'quantity'      => $newQty,
+                    'avg_price'     => $newAvgPrice,
+                    'cost'          => $newCost,
+                    'current_price' => $price,
+                    'market_value'  => $price * $newQty,
+                    'is_active'     => true,
+                ]);
+                $position->save();
+
+            } else {
+                // 減倉/平倉
+                if (($position->quantity ?? 0) < $quantity) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => '持倉數量不足，無法賣出',
+                    ], 422);
+                }
+
+                $realizedPnl = ($price - $position->avg_price) * $quantity;
+                $realizedPnlPct = $position->avg_price > 0
+                    ? ($realizedPnl / ($position->avg_price * $quantity)) * 100
+                    : 0;
+
+                $newQty  = $position->quantity - $quantity;
+                $newCost = $position->avg_price * $newQty;
+
+                $position->fill([
+                    'quantity'      => $newQty,
+                    'cost'          => $newCost,
+                    'current_price' => $price,
+                    'market_value'  => $price * $newQty,
+                    'is_active'     => $newQty > 0,
+                ]);
+                $position->save();
+            }
+
+            // ---- 寫入交易歷史 ----
+            $trade = TradeHistory::create([
+                'user_id'              => $userId,
+                'symbol'               => $symbol,
+                'name'                 => $name,
+                'type'                 => $type,
+                'order_type'           => $orderType,
+                'trade_date'           => now()->toDateString(),
+                'quantity'             => $quantity,
+                'price'                => $price,
+                'amount'               => $amount,
+                'commission'           => $commission,
+                'tax'                  => $tax,
+                'net_amount'           => $netAmount,
+                'realized_pnl'         => $realizedPnl,
+                'realized_pnl_percent' => $realizedPnlPct,
+            ]);
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'amount' => $amount,
-                    'commission' => round($commission, 0),
-                    'tax' => round($tax, 0),
-                    'total_fees' => round($totalFees, 0),
-                    'net_amount' => round($netAmount, 0),
-                    'rates' => [
-                        'commission_rate' => $commissionRate * 100 . '%',
-                        'tax_rate' => $taxRate * 100 . '%',
-                    ],
-                ]
+                'message' => '交易成功',
+                'data'    => [
+                    'trade_id'   => $trade->id,
+                    'symbol'     => $symbol,
+                    'order_type' => $orderType,
+                    'quantity'   => $quantity,
+                    'price'      => $price,
+                    'amount'     => $amount,
+                    'commission' => $commission,
+                    'tax'        => $tax,
+                    'net_amount' => $netAmount,
+                    'realized_pnl' => $realizedPnl,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('計算費用失敗', [
-                'error' => $e->getMessage()
-            ]);
+            DB::rollBack();
+            Log::error('下單失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => '計算失敗: ' . $e->getMessage()
+                'message' => '下單失敗: ' . $e->getMessage(),
             ], 500);
         }
     }
