@@ -427,12 +427,9 @@ export default {
         }))
       } catch (error) {
         console.error('載入股票列表失敗:', error)
-        // 使用模擬資料
-        stockList.value = [
-          { id: 1, label: '2330 - 台積電', symbol: '2330', name: '台積電' },
-          { id: 2, label: '2317 - 鴻海', symbol: '2317', name: '鴻海' },
-          { id: 3, label: '2454 - 聯發科', symbol: '2454', name: '聯發科' }
-        ]
+        // API 失敗時保持空陣列，讓使用者看到錯誤提示而非假資料
+        stockList.value = []
+        stockLoadError.value = '無法載入股票清單，請確認伺服器狀態後重新整理'
       } finally {
         loadingStocks.value = false
       }
@@ -445,15 +442,9 @@ export default {
         strategies.value = response.data.data
       } catch (error) {
         console.error('載入策略列表失敗:', error)
-        // 使用預設策略
-        strategies.value = [
-          { name: 'sma_crossover', display_name: 'SMA 均線交叉', description: '短期與長期均線交叉買賣' },
-          { name: 'macd', display_name: 'MACD 策略', description: 'MACD 線與訊號線交叉' },
-          { name: 'rsi', display_name: 'RSI 策略', description: 'RSI 超買超賣訊號' },
-          { name: 'bollinger_bands', display_name: '布林通道策略', description: '價格觸及上下軌買賣' },
-          { name: 'covered_call', display_name: '備兌買權策略', description: '持股+賣出 Call' },
-          { name: 'protective_put', display_name: '保護性賣權策略', description: '持股+買入 Put' }
-        ]
+        // API 失敗時保持空陣列，strategy select 會呈現空白
+        strategies.value = []
+        strategyLoadError.value = '無法載入策略清單，請確認伺服器狀態後重新整理'
       }
     }
 
@@ -478,7 +469,7 @@ export default {
         if (response.data.success) {
           backtestResults.value = response.data.data.results
           tradeHistory.value = parseTradeHistory(response.data.data.results.trade_history)
-          
+
           // 初始化圖表
           setTimeout(() => {
             initEquityChart()
@@ -499,7 +490,7 @@ export default {
     // 取得當前策略的參數
     const getStrategyParameters = () => {
       const params = {}
-      
+
       switch(strategy.value) {
         case 'sma_crossover':
           params.short_period = parameters.value.short_period
@@ -520,19 +511,19 @@ export default {
           params.std_dev = parameters.value.std_dev
           break
       }
-      
+
       return params
     }
 
     // 解析交易歷史
     const parseTradeHistory = (tradeHistoryJson) => {
       if (!tradeHistoryJson) return []
-      
+
       try {
-        const trades = typeof tradeHistoryJson === 'string' 
-          ? JSON.parse(tradeHistoryJson) 
+        const trades = typeof tradeHistoryJson === 'string'
+          ? JSON.parse(tradeHistoryJson)
           : tradeHistoryJson
-        
+
         return trades.map((trade, index) => ({
           id: index + 1,
           date: trade.date,
@@ -557,7 +548,7 @@ export default {
         : backtestResults.value.equity_curve
 
       const ctx = equityCurve.value.getContext('2d')
-      
+
       if (equityChartInstance) {
         equityChartInstance.destroy()
       }
@@ -659,7 +650,7 @@ export default {
       })
 
       const ctx = drawdownChart.value.getContext('2d')
-      
+
       if (drawdownChartInstance) {
         drawdownChartInstance.destroy()
       }
@@ -746,7 +737,7 @@ export default {
       })
 
       const ctx = priceChart.value.getContext('2d')
-      
+
       if (priceChartInstance) {
         priceChartInstance.destroy()
       }
@@ -840,14 +831,14 @@ export default {
         alert('請先執行回測')
         return
       }
-      
+
       console.log('儲存策略:', {
         stock: selectedStock.value,
         strategy: strategy.value,
         parameters: getStrategyParameters(),
         results: backtestResults.value
       })
-      
+
       alert('策略已儲存(功能開發中)')
     }
 
