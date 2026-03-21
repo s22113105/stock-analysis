@@ -279,7 +279,8 @@ export default {
 
         console.log('正在載入選擇權鏈資料...', params)
 
-        const response = await axios.get('/options/chain-table', { params })
+        // 修正：加上 /api 前綴
+        const response = await axios.get('/api/options/chain-table', { params })
         const result = response.data
 
         if (result.success && result.data) {
@@ -336,7 +337,8 @@ export default {
     // 測試資料庫連線
     const testConnection = async () => {
       try {
-        const response = await axios.get('/debug/data-check')
+        // 修正：加上 /api 前綴
+        const response = await axios.get('/api/debug/data-check')
         console.log('資料庫連線測試結果:', response.data)
         alert('資料庫連線測試結果:\n' + JSON.stringify(response.data, null, 2))
       } catch (error) {
@@ -348,11 +350,13 @@ export default {
     // 取得市場狀態
     const getMarketStatus = async () => {
       try {
+        // 修正：解開註解，並確保 /api 前綴正確，避免 ReferenceError 崩潰
         const response = await axios.get('/api/options/chain-table/market-status')
-        if (response.data.success) {
+        if (response.data && response.data.success) {
           marketStatus.value = response.data.data.market_status
         }
       } catch (error) {
+        console.error('獲取市場狀態失敗:', error)
         marketStatus.value = '未知'
       }
     }
