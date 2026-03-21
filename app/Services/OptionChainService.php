@@ -25,14 +25,14 @@ class OptionChainService
                 return $this->emptyResponse('資料庫中沒有選擇權資料');
             }
 
-            // 2. 取得所有可用的到期日
-            $availableExpiries = DB::table('options')
-                ->where('underlying', 'TXO')
-                ->where('is_active', true)
-                ->select('expiry_date')
+            // 2. 取得所有可用的到期日（只取有實際價格資料的合約）
+            $availableExpiries = DB::table('options as o')
+                ->join('option_prices as p', 'o.id', '=', 'p.option_id')
+                ->where('o.underlying', 'TXO')
+                ->select('o.expiry_date')
                 ->distinct()
-                ->orderBy('expiry_date')
-                ->pluck('expiry_date')
+                ->orderBy('o.expiry_date')
+                ->pluck('o.expiry_date')
                 ->map(function ($date) {
                     return Carbon::parse($date)->format('Y-m-d');
                 })
