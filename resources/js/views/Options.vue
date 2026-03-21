@@ -348,7 +348,7 @@ export default {
     // 取得市場狀態
     const getMarketStatus = async () => {
       try {
-        // const response = await axios.get('/api/options/chain-table/market-status')
+        const response = await axios.get('/api/options/chain-table/market-status')
         if (response.data.success) {
           marketStatus.value = response.data.data.market_status
         }
