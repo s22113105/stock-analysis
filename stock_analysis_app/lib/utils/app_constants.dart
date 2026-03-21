@@ -1,10 +1,8 @@
 class AppConstants {
   // ==========================================
-  // API Base URL
+  // API Base URL - Docker 環境
   // ==========================================
-  static const String baseUrl = 'http://localhost/api';
-  // Android 模擬器: 'http://10.0.2.2/api'
-  // 線上伺服器: 'https://your-domain.com/api'
+  static const String baseUrl = 'http://localhost:8000/api';
 
   // ==========================================
   // Auth API (對應 AuthController)
