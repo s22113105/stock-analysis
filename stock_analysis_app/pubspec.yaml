@@ -1,0 +1,42 @@
+name: stock_analysis_app
+description: Stock_Analysis Flutter App - 台股選擇權分析系統
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 狀態管理
+  get: ^4.6.6
+
+  # HTTP 請求
+  dio: ^5.4.0
+
+  # 本地儲存 (Token)
+  shared_preferences: ^2.2.2
+
+  # 圖表
+  fl_chart: ^0.66.2
+
+  # 圖示
+  cupertino_icons: ^1.0.6
+
+  # 時間格式
+  intl: ^0.19.0
+
+  # 載入動畫
+  shimmer: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
