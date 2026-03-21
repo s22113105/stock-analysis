@@ -253,21 +253,21 @@ export default {
         icon: 'mdi-crystal-ball',
         to: '/predictions'
       },
-    //   {
-    //     title: '策略回測',
-    //     icon: 'mdi-history',
-    //     to: '/backtest'
-    //   },
-    //   {
-    //     title: '即時監控',
-    //     icon: 'mdi-monitor-eye',
-    //     to: '/realtime'
-    //   },
-    //   {
-    //     title: '報表分析',
-    //     icon: 'mdi-file-chart',
-    //     to: '/reports'
-    //   },
+      {
+        title: '策略回測',
+        icon: 'mdi-history',
+        to: '/backtest'
+      },
+      {
+        title: '即時監控',
+        icon: 'mdi-monitor-eye',
+        to: '/realtime'
+      },
+      {
+        title: '報表分析',
+        icon: 'mdi-file-chart',
+        to: '/reports'
+      },
       {
         title: '系統設定',
         icon: 'mdi-cog',
