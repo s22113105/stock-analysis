@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Route;
  * ============================================
  * API Routes - Stock_Analysis System
  * ============================================
- * 
+ *
  * @version 2.0
  * @updated 2024-12
  * - 新增 Black-Scholes 進階分析 API
@@ -98,15 +98,15 @@ Route::prefix('black-scholes')->group(function () {
     Route::post('/calculate', [BlackScholesController::class, 'calculate']);
     Route::post('/batch', [BlackScholesController::class, 'batchCalculate']);
     Route::post('/implied-volatility', [BlackScholesController::class, 'impliedVolatility']);
-    
+
     // [新增] 進階分析功能
     Route::post('/time-decay', [BlackScholesController::class, 'timeDecay']);           // 時間衰減分析
     Route::post('/payoff', [BlackScholesController::class, 'payoff']);                   // 到期損益計算
     Route::post('/batch-prices', [BlackScholesController::class, 'batchPrices']);        // 批次價格計算
-    
+
     // [新增] 波動率相關
     Route::get('/volatility-smile', [BlackScholesController::class, 'volatilitySmile']); // 波動率微笑
-    
+
     // [新增] 批次 Greeks 計算
     Route::post('/batch-greeks', [BlackScholesController::class, 'batchGreeks']);        // 批次 Greeks
 });
