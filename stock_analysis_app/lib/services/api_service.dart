@@ -41,7 +41,9 @@ class ApiService extends GetxService {
     ));
   }
 
-  // Auth
+  // ==========================================
+  // Auth API
+  // ==========================================
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await _dio.post(AppConstants.loginUrl, data: {
       'email': email,
@@ -50,7 +52,8 @@ class ApiService extends GetxService {
     return response.data;
   }
 
-  Future<Map<String, dynamic>> register(String name, String email, String password) async {
+  Future<Map<String, dynamic>> register(
+      String name, String email, String password) async {
     final response = await _dio.post(AppConstants.registerUrl, data: {
       'name': name,
       'email': email,
@@ -70,12 +73,15 @@ class ApiService extends GetxService {
     await prefs.remove(AppConstants.userEmailKey);
   }
 
-  // Dashboard
+  // ==========================================
+  // Dashboard API
+  // ==========================================
   Future<Map<String, dynamic>> getDashboardStats() async {
     final response = await _dio.get(AppConstants.dashboardStatsUrl);
     return response.data;
   }
 
+  // ✅ 首頁股票走勢 - 對應 DashboardController::stockTrends
   Future<Map<String, dynamic>> getStockTrends({int days = 30}) async {
     final response = await _dio.get(
       AppConstants.dashboardStockTrendsUrl,
@@ -85,7 +91,8 @@ class ApiService extends GetxService {
   }
 
   Future<Map<String, dynamic>> getVolatilityOverview() async {
-    final response = await _dio.get(AppConstants.dashboardVolatilityOverviewUrl);
+    final response =
+        await _dio.get(AppConstants.dashboardVolatilityOverviewUrl);
     return response.data;
   }
 
@@ -94,9 +101,59 @@ class ApiService extends GetxService {
     return response.data;
   }
 
-  // Prediction
-  Future<Map<String, dynamic>> runPrediction(Map<String, dynamic> params) async {
-    final response = await _dio.post(AppConstants.predictionRunUrl, data: params);
+  // ==========================================
+  // Stock API
+  // GET /api/stocks — 全部股票清單
+  // ==========================================
+  Future<Map<String, dynamic>> getStocks({int perPage = 50}) async {
+    final response = await _dio.get(
+      AppConstants.stocksUrl,
+      queryParameters: {'per_page': perPage, 'is_active': true},
+    );
+    return response.data;
+  }
+
+  // ==========================================
+  // ✅ 修正：Stock Prices
+  // GET /api/stocks/{symbol}/prices?days=30&paginate=false
+  // StockPrice model 欄位: open, high, low, close, trade_date
+  // ==========================================
+  Future<Map<String, dynamic>> getStockPrices(
+    String symbol, {
+    int days = 30,
+  }) async {
+    final response = await _dio.get(
+      '/stocks/$symbol/prices',
+      queryParameters: {
+        'days': days,
+        'paginate': false,
+      },
+    );
+    return response.data;
+  }
+
+  // ==========================================
+  // Volatility API
+  // GET /api/volatility/historical/{stockId}
+  // ==========================================
+  Future<Map<String, dynamic>> getHistoricalVolatility(
+    int stockId, {
+    int period = 30,
+  }) async {
+    final response = await _dio.get(
+      '/volatility/historical/$stockId',
+      queryParameters: {'period': period},
+    );
+    return response.data;
+  }
+
+  // ==========================================
+  // Prediction API
+  // ==========================================
+  Future<Map<String, dynamic>> runPrediction(
+      Map<String, dynamic> params) async {
+    final response =
+        await _dio.post(AppConstants.predictionRunUrl, data: params);
     return response.data;
   }
 
@@ -105,9 +162,13 @@ class ApiService extends GetxService {
     return response.data;
   }
 
-  // Backtest
-  Future<Map<String, dynamic>> runBacktest(Map<String, dynamic> params) async {
-    final response = await _dio.post(AppConstants.backtestRunUrl, data: params);
+  // ==========================================
+  // Backtest API
+  // ==========================================
+  Future<Map<String, dynamic>> runBacktest(
+      Map<String, dynamic> params) async {
+    final response =
+        await _dio.post(AppConstants.backtestRunUrl, data: params);
     return response.data;
   }
 
@@ -121,15 +182,23 @@ class ApiService extends GetxService {
     return response.data;
   }
 
-  // Black-Scholes
-  Future<Map<String, dynamic>> calculateBlackScholes(Map<String, dynamic> params) async {
-    final response = await _dio.post(AppConstants.blackScholesCalculateUrl, data: params);
+  // ==========================================
+  // Black-Scholes API
+  // ==========================================
+  Future<Map<String, dynamic>> calculateBlackScholes(
+      Map<String, dynamic> params) async {
+    final response =
+        await _dio.post(AppConstants.blackScholesCalculateUrl, data: params);
     return response.data;
   }
 
-  // Volatility
-  Future<Map<String, dynamic>> calculateVolatility(Map<String, dynamic> params) async {
-    final response = await _dio.post(AppConstants.volatilityCalculateUrl, data: params);
+  // ==========================================
+  // Volatility Calculate (舊版相容)
+  // ==========================================
+  Future<Map<String, dynamic>> calculateVolatility(
+      Map<String, dynamic> params) async {
+    final response =
+        await _dio.post(AppConstants.volatilityCalculateUrl, data: params);
     return response.data;
   }
 }

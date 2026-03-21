@@ -103,57 +103,87 @@ class ChartView extends GetView<ChartController> {
     );
   }
 
-  Widget _buildStockSelector() {
+    Widget _buildStockSelector() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: const Color(0xFF141824),
-      child: Obx(() => Row(
-        children: controller.availableStocks.map((stock) {
-          final isSelected = controller.selectedSymbol.value == stock['symbol'];
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => controller.selectStock(stock['symbol']!, stock['name']!),
-              child: Container(
-                margin: const EdgeInsets.only(right: 6),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  gradient: isSelected
-                      ? const LinearGradient(
-                          colors: [Color(0xFF0066FF), Color(0xFF00D2FF)],
-                        )
-                      : null,
-                  color: isSelected ? null : const Color(0xFF0A0E1A),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSelected ? Colors.transparent : const Color(0xFF1E2536),
-                  ),
+        color: const Color(0xFF141824),
+        child: Obx(() {
+        if (controller.isLoadingStocks.value) {
+            return const SizedBox(
+            height: 52,
+            child: Center(
+                child: SizedBox(
+                width: 18, height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Color(0xFF00D2FF),
                 ),
-                child: Column(
-                  children: [
-                    Text(
-                      stock['symbol']!,
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : const Color(0xFF8892A4),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      stock['name']!,
-                      style: TextStyle(
-                        color: isSelected ? Colors.white70 : const Color(0xFF3D4759),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
                 ),
-              ),
             ),
-          );
-        }).toList(),
-      )),
+            );
+        }
+        // ✅ 修正：用 SingleChildScrollView 取代 ListView（不限高度）
+        return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+            children: controller.availableStocks.map((stock) {
+                final isSelected =
+                    controller.selectedSymbol.value == stock['symbol'];
+                return GestureDetector(
+                onTap: () => controller.selectStock(
+                    stock['symbol'] as String,
+                    stock['name'] as String,
+                    stock['id'] as int,
+                ),
+                child: Container(
+                    margin: const EdgeInsets.only(right: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                    gradient: isSelected
+                        ? const LinearGradient(
+                            colors: [Color(0xFF0066FF), Color(0xFF00D2FF)],
+                            )
+                        : null,
+                    color: isSelected ? null : const Color(0xFF0A0E1A),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: isSelected
+                            ? Colors.transparent
+                            : const Color(0xFF1E2536),
+                    ),
+                    ),
+                    child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        Text(
+                        stock['symbol'] as String,
+                        style: TextStyle(
+                            color: isSelected
+                                ? Colors.white
+                                : const Color(0xFF8892A4),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                        ),
+                        ),
+                        Text(
+                        stock['name'] as String,
+                        style: TextStyle(
+                            color: isSelected
+                                ? Colors.white70
+                                : const Color(0xFF3D4759),
+                            fontSize: 10,
+                        ),
+                        ),
+                    ],
+                    ),
+                ),
+                );
+            }).toList(),
+            ),
+        );
+        }),
     );
-  }
+    }
 
   Widget _buildChartTypeSelector() {
     final types = [
