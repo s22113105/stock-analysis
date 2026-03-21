@@ -81,7 +81,6 @@ class ApiService extends GetxService {
     return response.data;
   }
 
-  // ✅ 首頁股票走勢 - 對應 DashboardController::stockTrends
   Future<Map<String, dynamic>> getStockTrends({int days = 30}) async {
     final response = await _dio.get(
       AppConstants.dashboardStockTrendsUrl,
@@ -103,9 +102,9 @@ class ApiService extends GetxService {
 
   // ==========================================
   // Stock API
-  // GET /api/stocks — 全部股票清單
+  // GET /api/stocks — 取得全部股票清單
   // ==========================================
-  Future<Map<String, dynamic>> getStocks({int perPage = 50}) async {
+  Future<Map<String, dynamic>> getStocks({int perPage = 100}) async {
     final response = await _dio.get(
       AppConstants.stocksUrl,
       queryParameters: {'per_page': perPage, 'is_active': true},
@@ -114,20 +113,32 @@ class ApiService extends GetxService {
   }
 
   // ==========================================
-  // ✅ 修正：Stock Prices
-  // GET /api/stocks/{symbol}/prices?days=30&paginate=false
-  // StockPrice model 欄位: open, high, low, close, trade_date
+  // ✅ 正確：GET /api/stocks/{id}/prices?period=1m
+  // 後端：Stock::findOrFail($id) — 必須傳數字 id
+  // 回傳：{success, data: {stock:{}, prices:[...], count:N}}
+  // period 參數：1w/1m/3m/6m/1y
   // ==========================================
-  Future<Map<String, dynamic>> getStockPrices(
-    String symbol, {
+  Future<Map<String, dynamic>> getStockPricesById(
+    int stockId, {
     int days = 30,
   }) async {
+    // 把 days 轉換成後端接受的 period 參數
+    String period;
+    if (days <= 7) {
+      period = '1w';
+    } else if (days <= 30) {
+      period = '1m';
+    } else if (days <= 90) {
+      period = '3m';
+    } else if (days <= 180) {
+      period = '6m';
+    } else {
+      period = '1y';
+    }
+
     final response = await _dio.get(
-      '/stocks/$symbol/prices',
-      queryParameters: {
-        'days': days,
-        'paginate': false,
-      },
+      '/stocks/$stockId/prices',
+      queryParameters: {'period': period},
     );
     return response.data;
   }

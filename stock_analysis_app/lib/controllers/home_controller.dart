@@ -17,6 +17,9 @@ class HomeController extends GetxController {
   final RxList<AlertModel> alerts = <AlertModel>[].obs;
   final RxInt selectedDays = 30.obs;
 
+  // 固定顯示的3支股票（對應 DashboardController::TARGET_STOCKS）
+  static const List<String> targetSymbols = ['2330', '2317', '2454'];
+
   @override
   void onInit() {
     super.onInit();
@@ -42,9 +45,12 @@ class HomeController extends GetxController {
       stats.value = DashboardStatsModel.fromJson(response);
     } catch (e) {
       stats.value = DashboardStatsModel(
-        totalStocks: 0, activeStocks: 0,
-        totalOptions: 0, activeOptions: 0,
-        latestUpdate: null, targetStocks: [],
+        totalStocks: 0,
+        activeStocks: 0,
+        totalOptions: 0,
+        activeOptions: 0,
+        latestUpdate: null,
+        targetStocks: [],
       );
     } finally {
       isLoadingStats.value = false;
@@ -52,71 +58,131 @@ class HomeController extends GetxController {
   }
 
   // ==========================================
-  // ✅ 修正：GET /api/dashboard/stock-trends
-  // 回傳格式: {success, data: {stocks: [...], dates: [...]}}
-  // 每個 stock 有 prices: [{trade_date, open, high, low, close, volume}]
+  // 首頁股票走勢：
+  // Step1: GET /api/stocks → 取得全部股票，找出 2330/2317/2454 的 id
+  // Step2: GET /api/stocks/{id}/prices?period=1m → 取各支真實股價
   // ==========================================
   Future<void> loadStockTrends() async {
     isLoadingTrends.value = true;
     try {
-      final response =
-          await _apiService.getStockTrends(days: selectedDays.value);
+      // Step 1: 取得股票清單
+      final stocksResp = await _apiService.getStocks(perPage: 100);
+      final raw = stocksResp['data'];
 
-      final raw = response['data'] ?? response;
+      List<dynamic> allStocks = [];
+      if (raw is Map && raw['data'] is List) {
+        allStocks = raw['data'];
+      } else if (raw is List) {
+        allStocks = raw;
+      }
 
-      // 取 dates
-      final dates = List<String>.from(raw['dates'] ?? []);
+      // 篩選目標3支股票
+      final targetStocks = allStocks
+          .where((s) => targetSymbols.contains(s['symbol']?.toString()))
+          .toList();
 
-      // 取 stocks
-      final stocksRaw = raw['stocks'] as List<dynamic>? ?? [];
+      if (targetStocks.isEmpty) {
+        stockTrends.value = StockTrendModel(dates: [], stocks: []);
+        return;
+      }
 
-      final stocks = stocksRaw.map((s) {
-        // 每支股票的 prices
-        final pricesRaw = s['prices'] as List<dynamic>? ?? [];
-        final prices = pricesRaw.map((p) {
-          final tradeDate = p['trade_date']?.toString() ?? '';
-          final dateStr = tradeDate.length >= 10
-              ? tradeDate.substring(0, 10)
-              : tradeDate;
-          return StockPriceModel(
-            id: p['id'] ?? 0,
-            stockId: s['id'] ?? 0,
-            tradeDate: dateStr,
-            openPrice: _toDouble(p['open']),
-            highPrice: _toDouble(p['high']),
-            lowPrice: _toDouble(p['low']),
-            closePrice: _toDouble(p['close']),
-            volume: _toInt(p['volume']),
+      // Step 2: 並行取得各支股票的價格
+      final futures = targetStocks.map((s) async {
+        final symbol = s['symbol'].toString();
+        final name = s['name']?.toString() ?? symbol;
+        final id = s['id'] as int? ?? 0;
+
+        try {
+          // ✅ 用數字 id 查詢，對應 GET /api/stocks/{id}/prices
+          final priceResp = await _apiService.getStockPricesById(
+            id,
+            days: selectedDays.value,
           );
-        }).toList();
 
-        // 計算漲跌幅：比較最新和前一筆
-        double? changePercent;
-        double? currentPrice;
-        if (prices.length >= 2) {
-          final latest = prices.last.closePrice;
-          final prev = prices[prices.length - 2].closePrice;
-          currentPrice = latest;
-          if (prev > 0) changePercent = (latest - prev) / prev * 100;
-        } else if (prices.isNotEmpty) {
-          currentPrice = prices.last.closePrice;
+          // ✅ 正確解析: response['data']['prices']
+          final dataWrap =
+              priceResp['data'] as Map<String, dynamic>? ?? {};
+          final List<dynamic> priceList =
+              dataWrap['prices'] as List<dynamic>? ?? [];
+
+          // API 回傳升序（舊→新），不需反轉
+          final prices = priceList.map((p) {
+            final tradeDate = p['trade_date']?.toString() ?? '';
+            final dateStr = tradeDate.length >= 10
+                ? tradeDate.substring(0, 10)
+                : tradeDate;
+            return StockPriceModel(
+              id: p['id'] ?? 0,
+              stockId: id,
+              tradeDate: dateStr,
+              openPrice: _toDouble(p['open']),
+              highPrice: _toDouble(p['high']),
+              lowPrice: _toDouble(p['low']),
+              closePrice: _toDouble(p['close']),
+              volume: _toInt(p['volume']),
+            );
+          }).toList();
+
+          // 計算最新價格與漲跌幅
+          double? currentPrice;
+          double? changePercent;
+
+          if (prices.length >= 2) {
+            final latest = prices.last.closePrice;
+            final prev = prices[prices.length - 2].closePrice;
+            currentPrice = latest;
+            if (prev > 0) changePercent = (latest - prev) / prev * 100;
+          } else if (prices.isNotEmpty) {
+            currentPrice = prices.last.closePrice;
+          }
+
+          // 如果算不出來，從 latest_price 補
+          if (changePercent == null) {
+            final lp = s['latest_price'];
+            if (lp != null) {
+              changePercent = _toDouble(lp['change_percent']);
+              currentPrice ??= _toDouble(lp['close']);
+            }
+          }
+
+          return StockModel(
+            id: id,
+            symbol: symbol,
+            name: name,
+            isActive: true,
+            currentPrice: currentPrice,
+            changePercent: changePercent,
+            prices: prices,
+          );
+        } catch (e) {
+          // 這支股票取價格失敗，改用 latest_price 欄位
+          final lp = s['latest_price'];
+          return StockModel(
+            id: id,
+            symbol: symbol,
+            name: name,
+            isActive: true,
+            currentPrice: lp != null ? _toDouble(lp['close']) : null,
+            changePercent:
+                lp != null ? _toDouble(lp['change_percent']) : null,
+            prices: [],
+          );
         }
-
-        return StockModel(
-          id: s['id'] ?? 0,
-          symbol: s['symbol']?.toString() ?? '',
-          name: s['name']?.toString() ?? '',
-          isActive: s['is_active'] ?? true,
-          currentPrice: currentPrice,
-          changePercent: changePercent,
-          prices: prices,
-        );
       }).toList();
 
-      stockTrends.value = StockTrendModel(dates: dates, stocks: stocks);
+      final stockList = await Future.wait(futures);
+
+      // 照 targetSymbols 順序排列
+      stockList.sort((a, b) => targetSymbols
+          .indexOf(a.symbol)
+          .compareTo(targetSymbols.indexOf(b.symbol)));
+
+      stockTrends.value = StockTrendModel(
+        dates: [],
+        stocks: stockList,
+      );
     } catch (e) {
-      // 連不到 API 才用 mock
-      stockTrends.value = _getMockStockTrends();
+      stockTrends.value = StockTrendModel(dates: [], stocks: []);
     } finally {
       isLoadingTrends.value = false;
     }
@@ -124,17 +190,28 @@ class HomeController extends GetxController {
 
   // ==========================================
   // GET /api/dashboard/volatility-overview
+  // 回傳: {success, data: {volatilities: [{symbol, hv, iv}], avg_hv, avg_iv}}
   // ==========================================
   Future<void> loadVolatilityOverview() async {
     isLoadingVolatility.value = true;
     try {
       final response = await _apiService.getVolatilityOverview();
-      final raw = response['data'];
-      final list = raw is List ? raw : [];
-      volatilityList.value =
-          list.map((v) => VolatilityOverviewModel.fromJson(v)).toList();
+      final raw = response['data'] ?? {};
 
-      // 如果 API 回空陣列，用預設 mock（只顯示 2330/2317/2454）
+      // ✅ 取 volatilities 陣列（不是 data 本身）
+      final list = raw['volatilities'] as List<dynamic>? ?? [];
+
+      volatilityList.value = list.map((v) {
+        final hv = _toDouble(v['hv']);
+        final iv = _toDouble(v['iv']);
+        return VolatilityOverviewModel(
+          symbol: v['symbol']?.toString() ?? '',
+          hv: hv,
+          iv: iv,
+          signal: iv > hv ? 'high_iv' : 'normal',
+        );
+      }).toList();
+
       if (volatilityList.isEmpty) {
         volatilityList.value = [
           VolatilityOverviewModel(symbol: '2330', hv: 0, iv: 0),
@@ -143,10 +220,14 @@ class HomeController extends GetxController {
         ];
       }
     } catch (e) {
+      // API 失敗才顯示假資料
       volatilityList.value = [
-        VolatilityOverviewModel(symbol: '2330', hv: 18.5, iv: 22.3, signal: 'high_iv'),
-        VolatilityOverviewModel(symbol: '2317', hv: 15.2, iv: 17.8, signal: 'normal'),
-        VolatilityOverviewModel(symbol: '2454', hv: 21.0, iv: 24.5, signal: 'high_iv'),
+        VolatilityOverviewModel(
+            symbol: '2330', hv: 18.5, iv: 22.3, signal: 'high_iv'),
+        VolatilityOverviewModel(
+            symbol: '2317', hv: 15.2, iv: 17.8, signal: 'normal'),
+        VolatilityOverviewModel(
+            symbol: '2454', hv: 21.0, iv: 24.5, signal: 'high_iv'),
       ];
     } finally {
       isLoadingVolatility.value = false;
@@ -187,20 +268,5 @@ class HomeController extends GetxController {
     if (v is int) return v;
     if (v is double) return v.toInt();
     return int.tryParse(v.toString()) ?? 0;
-  }
-
-  // Mock（只有 API 完全失敗才用）
-  StockTrendModel _getMockStockTrends() {
-    final now = DateTime.now();
-    final dates = List.generate(30,
-        (i) => now.subtract(Duration(days: 29 - i)).toString().substring(0, 10));
-    return StockTrendModel(dates: dates, stocks: [
-      StockModel(id: 1, symbol: '2330', name: '台積電', isActive: true,
-          currentPrice: 935.0, changePercent: 1.2, prices: []),
-      StockModel(id: 2, symbol: '2317', name: '鴻海', isActive: true,
-          currentPrice: 185.5, changePercent: -0.5, prices: []),
-      StockModel(id: 3, symbol: '2454', name: '聯發科', isActive: true,
-          currentPrice: 1285.0, changePercent: 0.8, prices: []),
-    ]);
   }
 }
