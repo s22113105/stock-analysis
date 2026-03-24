@@ -1,8 +1,9 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+
 use App\Services\VolatilityService;
 use App\Models\Stock;
 use App\Models\Option;
@@ -18,7 +19,7 @@ use Carbon\Carbon;
 
 /**
  * 波動率計算 API 控制器 (優化版)
- * 
+ *
  * 功能：
  * - 計算歷史波動率 (HV)
  * - 計算隱含波動率 (IV)
@@ -43,7 +44,7 @@ class VolatilityController extends Controller
      * 計算歷史波動率 (Historical Volatility)
      *
      * GET /api/volatility/historical/{stockId}
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -72,7 +73,7 @@ class VolatilityController extends Controller
 
             // 快取 key
             $cacheKey = "volatility:historical:{$stockId}:{$period}:{$endDate}:{$method}";
-            
+
             // 嘗試從快取取得
             $cachedData = Cache::get($cacheKey);
             if ($cachedData && !$request->has('force')) {
@@ -169,7 +170,7 @@ class VolatilityController extends Controller
      * 計算隱含波動率 (Implied Volatility)
      *
      * GET /api/volatility/implied/{optionId}
-     * 
+     *
      * @param Request $request
      * @param int $optionId
      * @return JsonResponse
@@ -293,7 +294,7 @@ class VolatilityController extends Controller
      * 計算波動率錐 (Volatility Cone)
      *
      * GET /api/volatility/cone/{stockId}
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -318,7 +319,7 @@ class VolatilityController extends Controller
 
             // 快取 key
             $cacheKey = "volatility:cone:{$stockId}:{$lookbackDays}";
-            
+
             $cachedData = Cache::get($cacheKey);
             if ($cachedData && !$request->has('force')) {
                 return response()->json([
@@ -425,7 +426,7 @@ class VolatilityController extends Controller
      * 計算波動率曲面 (Volatility Surface)
      *
      * GET /api/volatility/surface/{stockId}
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -466,7 +467,7 @@ class VolatilityController extends Controller
                         ->where('strike_price', $strike)
                         ->where('option_type', 'call')
                         ->first();
-                    
+
                     $putOption = $options->where('expiry_date', $expiry)
                         ->where('strike_price', $strike)
                         ->where('option_type', 'put')
@@ -484,7 +485,7 @@ class VolatilityController extends Controller
                             : null,
                     ];
                 }
-                
+
                 $surface3D[] = [
                     'expiry' => $expiry,
                     'expiry_formatted' => Carbon::parse($expiry)->format('Y/m/d'),
@@ -526,7 +527,7 @@ class VolatilityController extends Controller
      * 計算波動率偏斜 (Volatility Skew)
      *
      * GET /api/volatility/skew/{stockId}
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -574,7 +575,7 @@ class VolatilityController extends Controller
                 $callOption = $nearOptions->where('strike_price', $strike)
                     ->where('option_type', 'call')
                     ->first();
-                
+
                 $putOption = $nearOptions->where('strike_price', $strike)
                     ->where('option_type', 'put')
                     ->first();
@@ -598,7 +599,7 @@ class VolatilityController extends Controller
             $atmStrike = $strikes->filter(fn($s) => abs($s - $stockPrice) < $stockPrice * 0.02)->first();
             $otmPut = $skewData[0] ?? null;
             $atmData = collect($skewData)->firstWhere('strike', $atmStrike);
-            
+
             $skewIndex = null;
             if ($otmPut && $atmData && $otmPut['iv_put'] && $atmData['iv_call']) {
                 $skewIndex = round($otmPut['iv_put'] - $atmData['iv_call'], 2);
@@ -640,7 +641,7 @@ class VolatilityController extends Controller
      * 使用 GARCH 模型預測波動率
      *
      * GET /api/volatility/garch/{stockId}
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -667,7 +668,7 @@ class VolatilityController extends Controller
 
             // 快取 key
             $cacheKey = "volatility:garch:{$stockId}:{$forecastDays}:{$modelType}";
-            
+
             $cachedData = Cache::get($cacheKey);
             if ($cachedData && !$request->has('force')) {
                 return response()->json([
@@ -807,7 +808,7 @@ class VolatilityController extends Controller
      * 手動計算並儲存波動率
      *
      * POST /api/volatility/calculate
-     * 
+     *
      * @param Request $request
      * @return JsonResponse
      */
@@ -926,7 +927,7 @@ class VolatilityController extends Controller
     private function calculateStd(array $values): float
     {
         if (empty($values)) return 0;
-        
+
         $mean = array_sum($values) / count($values);
         $variance = 0;
         foreach ($values as $value) {
@@ -952,10 +953,10 @@ class VolatilityController extends Controller
 
         for ($i = 0; $i < $maxIterations; $i++) {
             $bsPrice = $this->blackScholesPrice(
-                $spotPrice, $strikePrice, $timeToExpiry, 
+                $spotPrice, $strikePrice, $timeToExpiry,
                 $riskFreeRate, $sigma, $optionType
             );
-            
+
             $vega = $this->blackScholesVega(
                 $spotPrice, $strikePrice, $timeToExpiry,
                 $riskFreeRate, $sigma
@@ -971,7 +972,7 @@ class VolatilityController extends Controller
             }
 
             $sigma = $sigma - $diff / $vega;
-            
+
             // 確保 sigma 在合理範圍內
             $sigma = max(0.01, min(5.0, $sigma));
         }
@@ -983,7 +984,7 @@ class VolatilityController extends Controller
      * Black-Scholes 價格計算
      */
     private function blackScholesPrice(
-        float $S, float $K, float $T, 
+        float $S, float $K, float $T,
         float $r, float $sigma, string $type
     ): float {
         $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
@@ -1000,7 +1001,7 @@ class VolatilityController extends Controller
      * Black-Scholes Vega
      */
     private function blackScholesVega(
-        float $S, float $K, float $T, 
+        float $S, float $K, float $T,
         float $r, float $sigma
     ): float {
         $d1 = (log($S / $K) + ($r + 0.5 * $sigma * $sigma) * $T) / ($sigma * sqrt($T));
@@ -1079,11 +1080,11 @@ class VolatilityController extends Controller
      * 取得市場隱含波動率 (從選擇權價格)
      *
      * GET /api/volatility/market-iv/{stockId}
-     * 
+     *
      * 說明：
      * - 優先從 option_prices 表取得真實 IV
      * - 如果沒有選擇權資料，則返回 null
-     * 
+     *
      * @param Request $request
      * @param int $stockId
      * @return JsonResponse
@@ -1092,10 +1093,10 @@ class VolatilityController extends Controller
     {
         try {
             $stock = Stock::findOrFail($stockId);
-            
+
             // 快取 key
             $cacheKey = "volatility:txo_iv";
-            
+
             $cachedData = Cache::get($cacheKey);
             if ($cachedData && !$request->has('force')) {
                 // 加入股票資訊到快取資料
@@ -1130,7 +1131,7 @@ class VolatilityController extends Controller
             // 從 TXO 選擇權取得市場 IV
             // TXO IV 是台灣市場最重要的波動率指標，可作為所有個股的參考
             $txoIV = $this->getTxoMarketIV();
-            
+
             if ($txoIV) {
                 $result['has_real_iv'] = true;
                 $result['txo_iv'] = $txoIV['iv'];
@@ -1170,10 +1171,10 @@ class VolatilityController extends Controller
 
     /**
      * 取得 TXO (台指選擇權) 的市場 IV
-     * 
+     *
      * TXO 是台灣選擇權市場最活躍的商品
      * 其隱含波動率可作為整體市場波動率的參考指標
-     * 
+     *
      * @return array|null
      */
     private function getTxoMarketIV(): ?array
@@ -1311,7 +1312,7 @@ class VolatilityController extends Controller
 
     /**
      * 取得個股選擇權的 IV
-     * 
+     *
      * @param int $stockId
      * @return array|null
      */

@@ -1,9 +1,10 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
-use App\Jobs\FetchStockPricesJob;
-use App\Jobs\FetchOptionPricesJob;
+use App\Http\Controllers\Controller;
+use App\Jobs\FetchStockDataJob;
+use App\Jobs\FetchOptionDataJob;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Artisan;
@@ -16,14 +17,14 @@ use Carbon\Carbon;
 
 /**
  * 後台管理控制器
- * 
+ *
  * 處理系統管理、Job 手動觸發、監控等功能
  */
 class AdminController extends Controller
 {
     /**
      * 取得系統總覽
-     * 
+     *
      * GET /api/admin/overview
      */
     public function overview(): JsonResponse
@@ -90,7 +91,7 @@ class AdminController extends Controller
 
     /**
      * 手動觸發股票資料爬蟲
-     * 
+     *
      * POST /api/admin/jobs/trigger-stock-crawler
      */
     public function triggerStockCrawler(Request $request): JsonResponse
@@ -115,8 +116,8 @@ class AdminController extends Controller
 
             if ($symbol) {
                 // 單一股票
-                FetchStockPricesJob::dispatch($symbol, $date, $sync);
-                
+                FetchStockDataJob::dispatch($symbol, $date, $sync);
+
                 return response()->json([
                     'success' => true,
                     'message' => "股票 {$symbol} 爬蟲任務已加入佇列",
@@ -152,7 +153,7 @@ class AdminController extends Controller
 
     /**
      * 手動觸發選擇權資料爬蟲
-     * 
+     *
      * POST /api/admin/jobs/trigger-option-crawler
      */
     public function triggerOptionCrawler(Request $request): JsonResponse
@@ -195,7 +196,7 @@ class AdminController extends Controller
 
     /**
      * 取得 Queue 任務列表
-     * 
+     *
      * GET /api/admin/jobs/queue
      */
     public function queueJobs(): JsonResponse
@@ -239,7 +240,7 @@ class AdminController extends Controller
 
     /**
      * 重試失敗的 Job
-     * 
+     *
      * POST /api/admin/jobs/retry/{id}
      */
     public function retryFailedJob(int $id): JsonResponse
@@ -267,7 +268,7 @@ class AdminController extends Controller
 
     /**
      * 清除快取
-     * 
+     *
      * POST /api/admin/cache/clear
      */
     public function clearCache(Request $request): JsonResponse
@@ -329,7 +330,7 @@ class AdminController extends Controller
 
     /**
      * 取得系統日誌
-     * 
+     *
      * GET /api/admin/logs
      */
     public function logs(Request $request): JsonResponse
@@ -351,7 +352,7 @@ class AdminController extends Controller
             $level = $request->input('level');
 
             $logFile = storage_path('logs/laravel.log');
-            
+
             if (!file_exists($logFile)) {
                 return response()->json([
                     'success' => false,
@@ -391,7 +392,7 @@ class AdminController extends Controller
 
     /**
      * 執行資料庫維護
-     * 
+     *
      * POST /api/admin/database/optimize
      */
     public function optimizeDatabase(): JsonResponse
@@ -467,9 +468,9 @@ class AdminController extends Controller
         try {
             $database = config('database.connections.mysql.database');
             $result = DB::select("
-                SELECT 
+                SELECT
                     ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb
-                FROM information_schema.TABLES 
+                FROM information_schema.TABLES
                 WHERE table_schema = ?
             ", [$database]);
 
@@ -488,7 +489,7 @@ class AdminController extends Controller
             if (config('queue.default') === 'redis') {
                 $key = config('queue.connections.redis.queue', 'default');
                 $prefix = config('database.redis.options.prefix');
-                
+
                 if ($type === 'ready') {
                     return Redis::connection()->llen($prefix . 'queues:' . $key);
                 } elseif ($type === 'reserved') {

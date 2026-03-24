@@ -1,7 +1,8 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Artisan;
@@ -218,13 +219,13 @@ class CrawlerController extends Controller
         $pos = -2;
         $beginning = false;
         $text = [];
-        
+
         while ($linecounter > 0) {
             $t = " ";
             while ($t != "\n") {
                 if (fseek($handle, $pos, SEEK_END) == -1) {
-                    $beginning = true; 
-                    break; 
+                    $beginning = true;
+                    break;
                 }
                 $t = fgetc($handle);
                 $pos--;
@@ -237,7 +238,7 @@ class CrawlerController extends Controller
             if ($beginning) break;
         }
         fclose($handle);
-        
+
         return array_reverse($text);
     }
 }

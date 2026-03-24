@@ -8,22 +8,28 @@ use Illuminate\Support\Facades\Route;
  * API Routes - Stock_Analysis System
  * ============================================
  *
- * @version 2.0
+ * @version 2.1
  * @updated 2024-12
  * - 新增 Black-Scholes 進階分析 API
+ * - 新增 Admin 路由群組（含 auth:sanctum 保護）
+ * - 移除 Debug 路由（正式環境安全）
+ * - 統一 Controller 命名空間
  */
 
-// 導入所有需要的控制器
+// ==========================================
+// 統一引入所有 Controller（命名空間一致）
+// ==========================================
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\StockController;
-use App\Http\Controllers\OptionController;
 use App\Http\Controllers\Api\OptionChainController;
 use App\Http\Controllers\Api\DashboardController;
-use App\Http\Controllers\BlackScholesController;
-use App\Http\Controllers\VolatilityController;
 use App\Http\Controllers\Api\PredictionController;
-use App\Http\Controllers\BacktestController;
-use App\Http\Controllers\CrawlerController;
+use App\Http\Controllers\Api\OptionController;
+use App\Http\Controllers\Api\BlackScholesController;
+use App\Http\Controllers\Api\VolatilityController;
+use App\Http\Controllers\Api\BacktestController;
+use App\Http\Controllers\Api\CrawlerController;
+use App\Http\Controllers\Api\AdminController;
 
 /*
 |--------------------------------------------------------------------------
@@ -72,7 +78,7 @@ Route::prefix('options')->group(function () {
     // 列表
     Route::get('/', [OptionController::class, 'index']);
 
-    // ⭐⭐⭐ 這兩行必須在 {id} 之前 ⭐⭐⭐
+    // ⭐ 靜態路由必須在 {id} 之前 ⭐
     Route::get('/chain-table', [OptionChainController::class, 'getChainTable']);
     Route::get('/chain/{underlying}', [OptionController::class, 'chain']);
 
@@ -86,7 +92,7 @@ Route::prefix('options')->group(function () {
         Route::get('/oi-distribution', [OptionController::class, 'txoOiDistribution']);
     });
 
-    // ⭐⭐⭐ {id} 必須放最後 ⭐⭐⭐
+    // ⭐ {id} 必須放最後 ⭐
     Route::get('/{id}', [OptionController::class, 'show']);
 });
 
@@ -94,21 +100,14 @@ Route::prefix('options')->group(function () {
 // Black-Scholes API (選擇權定價模型)
 // ==========================================
 Route::prefix('black-scholes')->group(function () {
-    // 基本計算
     Route::post('/calculate', [BlackScholesController::class, 'calculate']);
     Route::post('/batch', [BlackScholesController::class, 'batchCalculate']);
     Route::post('/implied-volatility', [BlackScholesController::class, 'impliedVolatility']);
-
-    // [新增] 進階分析功能
-    Route::post('/time-decay', [BlackScholesController::class, 'timeDecay']);           // 時間衰減分析
-    Route::post('/payoff', [BlackScholesController::class, 'payoff']);                   // 到期損益計算
-    Route::post('/batch-prices', [BlackScholesController::class, 'batchPrices']);        // 批次價格計算
-
-    // [新增] 波動率相關
-    Route::get('/volatility-smile', [BlackScholesController::class, 'volatilitySmile']); // 波動率微笑
-
-    // [新增] 批次 Greeks 計算
-    Route::post('/batch-greeks', [BlackScholesController::class, 'batchGreeks']);        // 批次 Greeks
+    Route::post('/time-decay', [BlackScholesController::class, 'timeDecay']);
+    Route::post('/payoff', [BlackScholesController::class, 'payoff']);
+    Route::post('/batch-prices', [BlackScholesController::class, 'batchPrices']);
+    Route::get('/volatility-smile', [BlackScholesController::class, 'volatilitySmile']);
+    Route::post('/batch-greeks', [BlackScholesController::class, 'batchGreeks']);
 });
 
 // ==========================================
@@ -118,14 +117,10 @@ Route::prefix('volatility')->group(function () {
     Route::get('/historical/{stock_id}', [VolatilityController::class, 'historical']);
     Route::get('/implied/{option_id}', [VolatilityController::class, 'implied']);
     Route::get('/market-iv/{stockId}', [VolatilityController::class, 'marketIV']);
-
-    // 進階波動率分析
     Route::get('/cone/{stock_id}', [VolatilityController::class, 'cone']);
     Route::get('/surface/{stock_id}', [VolatilityController::class, 'surface']);
     Route::get('/skew/{stock_id}', [VolatilityController::class, 'skew']);
     Route::get('/garch/{stock_id}', [VolatilityController::class, 'garch']);
-
-    // 手動觸發計算
     Route::post('/calculate', [VolatilityController::class, 'calculate']);
 });
 
@@ -162,7 +157,7 @@ Route::prefix('crawler')->group(function () {
 });
 
 // ==========================================
-// 測試路由 (開發用)
+// 測試路由 (開發用 - 正式環境可移除)
 // ==========================================
 Route::get('/test', function () {
     return response()->json([
@@ -186,22 +181,26 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 // ==========================================
-// Debug 路由 (診斷用)
+// Admin API (後台管理) - 需要登入認證
 // ==========================================
-Route::get('/debug/data-check', function () {
-    $prices = \App\Models\OptionPrice::count();
-    $options = \App\Models\Option::count();
-    // 檢查有多少價格是對應不到合約的
-    $orphaned = \App\Models\OptionPrice::doesntHave('option')->count();
+Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
+    // 系統總覽
+    Route::get('/overview', [AdminController::class, 'overview']);
 
-    $latest = \App\Models\OptionPrice::max('trade_date');
+    // 系統日誌
+    Route::get('/logs', [AdminController::class, 'logs']);
 
-    return [
-        'status' => ($orphaned > 0) ? 'DATA_CORRUPTED' : 'DATA_OK',
-        'total_prices' => $prices,
-        'total_options' => $options,
-        'orphaned_prices_count' => $orphaned . ' (這些價格找不到對應的合約)',
-        'latest_trade_date' => $latest,
-        'message' => ($orphaned > 0) ? '資料庫關聯已斷裂，必須重置資料庫！' : '資料庫結構正常'
-    ];
+    // Queue Job 管理
+    Route::prefix('jobs')->group(function () {
+        Route::get('/queue', [AdminController::class, 'queueJobs']);
+        Route::post('/trigger-stock-crawler', [AdminController::class, 'triggerStockCrawler']);
+        Route::post('/trigger-option-crawler', [AdminController::class, 'triggerOptionCrawler']);
+        Route::post('/retry/{id}', [AdminController::class, 'retryFailedJob']);
+    });
+
+    // 快取管理
+    Route::post('/cache/clear', [AdminController::class, 'clearCache']);
+
+    // 資料庫維護
+    Route::post('/database/optimize', [AdminController::class, 'optimizeDatabase']);
 });

@@ -1,8 +1,9 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+
 use App\Services\BlackScholesService;
 use App\Models\Option;
 use App\Models\OptionPrice;
@@ -14,7 +15,7 @@ use Carbon\Carbon;
 
 /**
  * Black-Scholes 計算 API 控制器
- * 
+ *
  * @version 2.0 改進版
  * - 新增時間衰減分析 API
  * - 新增到期損益計算 API
@@ -349,15 +350,15 @@ class BlackScholesController extends Controller
             );
 
             // 計算損益兩平點
-            $breakeven = $optionType === 'call' 
-                ? $strikePrice + $premium 
+            $breakeven = $optionType === 'call'
+                ? $strikePrice + $premium
                 : $strikePrice - $premium;
 
             // 計算最大獲利和最大虧損
-            $maxProfit = $position === 'long' 
+            $maxProfit = $position === 'long'
                 ? ($optionType === 'call' ? '無限' : round($strikePrice - $premium, 2))
                 : $premium;
-            
+
             $maxLoss = $position === 'long'
                 ? $premium
                 : ($optionType === 'call' ? '無限' : round($strikePrice - $premium, 2));
