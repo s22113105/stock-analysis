@@ -146,7 +146,6 @@ export default {
       errors.value = { email: [], password: [] }
 
       try {
-        // ✅ 修正:移除 /api 前綴,因為 baseURL 已經是 /api
         const response = await axios.post('auth/login', {
           email: email.value,
           password: password.value
@@ -156,12 +155,13 @@ export default {
           // 儲存 token
           const token = response.data.data.token
           localStorage.setItem('authToken', token)
-          
+
           // 設定 axios 預設 header
           axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
 
           // 儲存使用者資訊
           localStorage.setItem('user', JSON.stringify(response.data.data.user))
+          localStorage.setItem('userEmail', response.data.data.user.email)  // ← 新增：儲存 email 供 admin 判斷用
 
           // 記住我
           if (rememberMe.value) {
@@ -180,7 +180,7 @@ export default {
         }
       } catch (error) {
         console.error('❌ 登入錯誤:', error)
-        
+
         if (error.response) {
           if (error.response.status === 422) {
             // 驗證錯誤
