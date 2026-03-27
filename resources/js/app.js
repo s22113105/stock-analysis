@@ -23,8 +23,9 @@ import axios from 'axios';
 // ==========================================
 axios.defaults.baseURL = '/api';
 axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
-axios.defaults.headers.common['X-CSRF-TOKEN'] = 
-    window.Laravel?.csrfToken || 
+axios.defaults.headers.common['Accept'] = 'application/json';
+axios.defaults.headers.common['X-CSRF-TOKEN'] =
+    window.Laravel?.csrfToken ||
     document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
 // ==========================================
@@ -34,12 +35,12 @@ axios.interceptors.request.use(
     (config) => {
         // 從 localStorage 獲取 token
         const token = localStorage.getItem('authToken');
-        
+
         if (token) {
             // 如果有 token,自動添加到 Authorization header
             config.headers.Authorization = `Bearer ${token}`;
         }
-        
+
         return config;
     },
     (error) => {
@@ -60,14 +61,14 @@ axios.interceptors.response.use(
             // 處理 401 未授權錯誤
             if (error.response.status === 401) {
                 console.log('🔒 Token 已過期或無效,重新導向至登入頁');
-                
+
                 // 清除本地存儲
                 localStorage.removeItem('authToken');
                 localStorage.removeItem('user');
-                
+
                 // 移除 axios 預設 header
                 delete axios.defaults.headers.common['Authorization'];
-                
+
                 // 如果不在登入頁,則導向登入頁
                 if (window.location.pathname !== '/login') {
                     router.push({
@@ -76,17 +77,17 @@ axios.interceptors.response.use(
                     });
                 }
             }
-            
+
             // 處理 403 禁止訪問錯誤
             if (error.response.status === 403) {
                 console.log('🚫 沒有權限訪問此資源');
             }
-            
+
             // 處理 422 驗證錯誤
             if (error.response.status === 422) {
                 console.log('⚠️ 驗證錯誤:', error.response.data.errors);
             }
-            
+
             // 處理 500 伺服器錯誤
             if (error.response.status === 500) {
                 console.error('❌ 伺服器錯誤:', error.response.data);
@@ -98,7 +99,7 @@ axios.interceptors.response.use(
             // 設定請求時發生錯誤
             console.error('⚠️ 請求配置錯誤:', error.message);
         }
-        
+
         return Promise.reject(error);
     }
 );
@@ -108,7 +109,7 @@ axios.interceptors.response.use(
 // ==========================================
 const initializeAuth = () => {
     const token = localStorage.getItem('authToken');
-    
+
     if (token) {
         axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         console.log('✅ Token 已載入到 Axios');

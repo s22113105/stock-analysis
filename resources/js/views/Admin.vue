@@ -422,7 +422,7 @@ export default {
     // 載入系統總覽
     const loadOverview = async () => {
       try {
-        const response = await axios.get('/api/admin/overview')
+        const response = await axios.get('/admin/overview')
         overview.value = response.data.data
       } catch (error) {
         console.error('載入系統總覽失敗:', error)
@@ -433,7 +433,7 @@ export default {
     // 載入 Queue Jobs
     const loadQueueJobs = async () => {
       try {
-        const response = await axios.get('/api/admin/jobs/queue')
+        const response = await axios.get('/admin/jobs/queue')
         queueJobs.value = response.data.data
       } catch (error) {
         console.error('載入 Queue Jobs 失敗:', error)
@@ -444,7 +444,7 @@ export default {
     const triggerStockCrawler = async () => {
       stockCrawlerLoading.value = true
       try {
-        const response = await axios.post('/api/admin/jobs/trigger-stock-crawler', {
+        const response = await axios.post('/admin/jobs/trigger-stock-crawler', {
           symbol: stockCrawlerSymbol.value || undefined,
           date: stockCrawlerDate.value,
           sync: stockCrawlerSync.value
@@ -463,7 +463,7 @@ export default {
     const triggerOptionCrawler = async () => {
       optionCrawlerLoading.value = true
       try {
-        const response = await axios.post('/api/admin/jobs/trigger-option-crawler', {
+        const response = await axios.post('/admin/jobs/trigger-option-crawler', {
           date: optionCrawlerDate.value
         })
         showSnackbar(response.data.message, 'success')
@@ -479,7 +479,7 @@ export default {
     // 重試失敗的 Job
     const retryJob = async (id) => {
       try {
-        const response = await axios.post(`/api/admin/jobs/retry/${id}`)
+        const response = await axios.post(`/admin/jobs/retry/${id}`)
         showSnackbar(response.data.message, 'success')
         loadQueueJobs()
       } catch (error) {
@@ -492,7 +492,7 @@ export default {
     const clearCache = async (type) => {
       cacheLoading.value[type] = true
       try {
-        const response = await axios.post('/api/admin/cache/clear', { type })
+        const response = await axios.post('/admin/cache/clear', { type })
         showSnackbar(response.data.message, 'success')
       } catch (error) {
         console.error('清除快取失敗:', error)
@@ -506,7 +506,7 @@ export default {
     const loadLogs = async () => {
       logsLoading.value = true
       try {
-        const response = await axios.get('/api/admin/logs', {
+        const response = await axios.get('/admin/logs', {
           params: {
             lines: 200,
             level: logLevel.value
@@ -540,7 +540,7 @@ export default {
       loadOverview()
       loadQueueJobs()
       loadLogs()
-      
+
       // 每 30 秒自動更新一次
       setInterval(() => {
         loadOverview()

@@ -138,7 +138,7 @@ export default {
         ])
 
         const isAdmin = computed(() => {
-            return localStorage.getItem('userEmail') === 'admin@stock.com'
+            return user.value?.email === 'admin@stock.com'
         })
 
         const hideLayout = computed(() => route.meta.hideLayout === true)
