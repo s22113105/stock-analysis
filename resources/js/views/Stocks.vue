@@ -16,7 +16,7 @@
       </v-col>
     </v-row>
 
-    <!-- 篩選器 (保持不變) -->
+    <!-- 篩選器 -->
     <v-row class="mb-4">
       <v-col cols="12" md="3">
         <v-text-field
@@ -73,12 +73,9 @@
             </v-chip>
           </v-card-title>
           <v-card-text>
-
             <v-alert v-if="loading" type="info" variant="tonal" class="my-4">
               資料載入中，請稍候...
             </v-alert>
-
-            <!-- 錯誤訊息 -->
             <v-alert
               v-if="errorMessage"
               :type="stocks.length > 0 ? 'warning' : 'error'"
@@ -109,39 +106,27 @@
                 <span>{{ item.name }}</span>
               </template>
               <template v-slot:item.price="{ item }">
-                <span v-if="item.price">
-                  ${{ item.price.toFixed(2) }}
-                </span>
+                <span v-if="item.price">${{ item.price.toFixed(2) }}</span>
                 <span v-else class="text-grey">N/A</span>
               </template>
               <template v-slot:item.change="{ item }">
-                <v-chip
-                  v-if="item.change !== null"
-                  :color="getChangeColor(item.change)"
-                  size="small"
-                >
-                  <v-icon size="small">
-                    {{ item.change >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}
-                  </v-icon>
+                <v-chip v-if="item.change !== null" :color="getChangeColor(item.change)" size="small">
+                  <v-icon size="small">{{ item.change >= 0 ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
                   {{ item.change >= 0 ? '+' : '' }}{{ item.change.toFixed(2) }}%
                 </v-chip>
                 <span v-else class="text-grey">-</span>
               </template>
               <template v-slot:item.volume="{ item }">
-                <span v-if="item.volume">
-                  {{ formatVolume(item.volume) }}
-                </span>
+                <span v-if="item.volume">{{ formatVolume(item.volume) }}</span>
                 <span v-else class="text-grey">-</span>
               </template>
               <template v-slot:item.trade_date="{ item }">
-                <span v-if="item.trade_date">
-                  {{ formatDate(item.trade_date) }}
-                </span>
+                <span v-if="item.trade_date">{{ formatDate(item.trade_date) }}</span>
                 <span v-else class="text-grey">-</span>
               </template>
+              <!-- ★ 操作欄：拿掉走勢圖按鈕，只保留詳情和選擇權分析 -->
               <template v-slot:item.actions="{ item }">
                 <v-btn icon="mdi-eye" size="small" variant="text" @click="viewStockDetail(item)" title="詳情"></v-btn>
-                <v-btn icon="mdi-chart-line" size="small" variant="text" @click="viewChart(item)" title="走勢圖"></v-btn>
                 <v-btn icon="mdi-calculator-variant" size="small" variant="text" @click="calculate(item)" title="選擇權分析"></v-btn>
               </template>
             </v-data-table>
@@ -150,7 +135,7 @@
       </v-col>
     </v-row>
 
-    <!-- 快速統計 (保持不變) -->
+    <!-- 快速統計 -->
     <v-row class="mt-4">
       <v-col cols="12" md="3">
         <v-card color="red" dark elevation="2">
@@ -206,8 +191,8 @@
       </v-col>
     </v-row>
 
-    <!-- 股票詳情對話框 (保持不變) -->
-    <v-dialog v-model="detailDialog" max-width="800">
+    <!-- ★ 股票詳情對話框（含走勢圖） -->
+    <v-dialog v-model="detailDialog" max-width="860" @after-leave="destroyChart">
       <v-card v-if="selectedStock">
         <v-card-title class="d-flex align-center">
           <div>
@@ -218,7 +203,9 @@
           <v-btn icon="mdi-close" variant="text" @click="detailDialog = false"></v-btn>
         </v-card-title>
         <v-divider></v-divider>
+
         <v-card-text>
+          <!-- 價格資訊 -->
           <v-row class="my-3">
             <v-col cols="6">
               <div class="text-subtitle-2 text-grey">當前價格</div>
@@ -258,13 +245,44 @@
               <div class="text-body-1">{{ formatDate(selectedStock.trade_date) }}</div>
             </v-col>
           </v-row>
+
+          <!-- ★ 走勢圖區塊 -->
+          <v-divider class="my-4"></v-divider>
+          <div class="d-flex align-center justify-space-between mb-3">
+            <span class="text-subtitle-1 font-weight-bold">
+              <v-icon class="mr-1">mdi-chart-line</v-icon>走勢圖
+            </span>
+            <!-- 期間選擇 -->
+            <v-btn-group density="compact" variant="outlined">
+              <v-btn
+                v-for="p in periods"
+                :key="p.value"
+                :color="chartPeriod === p.value ? 'primary' : ''"
+                @click="changePeriod(p.value)"
+                size="small"
+              >{{ p.label }}</v-btn>
+            </v-btn-group>
+          </div>
+
+          <!-- 載入中 -->
+          <div v-if="chartLoading" class="text-center py-6">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+            <div class="mt-2 text-grey">載入走勢圖...</div>
+          </div>
+
+          <!-- 無資料 -->
+          <v-alert v-else-if="chartError" type="warning" variant="tonal" density="compact">
+            {{ chartError }}
+          </v-alert>
+
+          <!-- 圖表 Canvas -->
+          <div v-show="!chartLoading && !chartError" style="position: relative; height: 280px;">
+            <canvas ref="stockChartCanvas"></canvas>
+          </div>
         </v-card-text>
+
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="primary" @click="viewChart(selectedStock)">
-            <v-icon left>mdi-chart-line</v-icon>
-            查看走勢圖
-          </v-btn>
           <v-btn color="secondary" @click="calculate(selectedStock)">
             <v-icon left>mdi-calculator</v-icon>
             選擇權分析
@@ -284,21 +302,21 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { Chart, registerables } from 'chart.js'
 import axios from 'axios'
+
+Chart.register(...registerables)
 
 export default {
   name: 'Stocks',
   setup() {
     const router = useRouter()
 
-    // ==========================================
     // 狀態管理
-    // ==========================================
     const loading = ref(false)
     const stocks = ref([])
-    // 移除 rawApiResult 狀態
     const search = ref('')
     const marketFilter = ref(null)
     const industryFilter = ref(null)
@@ -309,136 +327,207 @@ export default {
     const showError = ref(false)
     const errorMessage = ref('')
 
-    // 篩選選項 (保持不變)
+    // 篩選選項
     const markets = ref(['上市', '上櫃', 'TWSE', 'TPEx'])
     const industries = ref([])
     const changeOptions = ref(['上漲', '下跌', '平盤'])
 
-    // 表格欄位定義 (保持不變)
+    // 表格欄位（拿掉走勢圖，操作欄縮小）
     const headers = ref([
-      { title: '股票代碼', key: 'symbol', width: '120px', sortable: true },
-      { title: '股票名稱', key: 'name', width: '150px', sortable: true },
-      { title: '市場', key: 'market', width: '100px', sortable: true },
-      { title: '產業', key: 'industry', width: '120px', sortable: true },
-      { title: '當前價格', key: 'price', width: '120px', sortable: true },
-      { title: '漲跌幅', key: 'change', width: '120px', sortable: true },
-      { title: '成交量', key: 'volume', width: '120px', sortable: true },
-      { title: '交易日期', key: 'trade_date', width: '120px', sortable: true },
-      { title: '操作', key: 'actions', width: '150px', sortable: false }
+      { title: '股票代碼', key: 'symbol',     width: '120px', sortable: true },
+      { title: '股票名稱', key: 'name',        width: '150px', sortable: true },
+      { title: '市場',     key: 'market',      width: '100px', sortable: true },
+      { title: '產業',     key: 'industry',    width: '120px', sortable: true },
+      { title: '當前價格', key: 'price',       width: '120px', sortable: true },
+      { title: '漲跌幅',   key: 'change',      width: '120px', sortable: true },
+      { title: '成交量',   key: 'volume',      width: '120px', sortable: true },
+      { title: '交易日期', key: 'trade_date',  width: '120px', sortable: true },
+      { title: '操作',     key: 'actions',     width: '100px', sortable: false }
     ])
 
-    // ==========================================
-    // 計算屬性
-    // ==========================================
+    // ★ 走勢圖相關
+    const stockChartCanvas = ref(null)
+    const chartLoading = ref(false)
+    const chartError = ref('')
+    const chartPeriod = ref('3m')
+    let chartInstance = null
 
-    // 篩選後的股票列表
+    const periods = [
+      { label: '1M', value: '1m' },
+      { label: '3M', value: '3m' },
+      { label: '6M', value: '6m' },
+      { label: '1Y', value: '1y' },
+    ]
+
+    // 銷毀圖表
+    const destroyChart = () => {
+      if (chartInstance) {
+        chartInstance.destroy()
+        chartInstance = null
+      }
+    }
+
+    // 載入並繪製走勢圖
+    const loadChart = async (stock, period) => {
+      if (!stock?.id) return
+      chartLoading.value = true
+      chartError.value = ''
+      destroyChart()
+
+      try {
+        const response = await axios.get(`stocks/${stock.id}/chart`, {
+          params: { period }
+        })
+
+        if (!response.data.success) {
+          chartError.value = response.data.message || '無法載入圖表資料'
+          return
+        }
+
+        const data = response.data.data
+        const labels = data.labels || []
+        const prices = data.datasets?.[0]?.data || []
+
+        if (labels.length === 0) {
+          chartError.value = '此股票暫無歷史價格資料'
+          return
+        }
+
+        // 等 DOM 更新後再畫圖
+        await nextTick()
+
+        if (!stockChartCanvas.value) return
+
+        const ctx = stockChartCanvas.value.getContext('2d')
+        const isUp = stock.change >= 0
+        const color = isUp ? 'rgb(239, 83, 80)' : 'rgb(38, 166, 154)'
+        const bgColor = isUp ? 'rgba(239, 83, 80, 0.1)' : 'rgba(38, 166, 154, 0.1)'
+
+        chartInstance = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: `${stock.symbol} 收盤價`,
+              data: prices,
+              borderColor: color,
+              backgroundColor: bgColor,
+              borderWidth: 1.5,
+              fill: true,
+              tension: 0.2,
+              pointRadius: 0,
+              pointHoverRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: ctx => `NT$ ${ctx.parsed.y?.toFixed(2)}`
+                }
+              }
+            },
+            scales: {
+              x: {
+                ticks: {
+                  maxTicksLimit: 8,
+                  font: { size: 11 }
+                }
+              },
+              y: {
+                beginAtZero: false,
+                ticks: { font: { size: 11 } }
+              }
+            }
+          }
+        })
+
+      } catch (err) {
+        console.error('載入走勢圖失敗:', err)
+        chartError.value = '載入走勢圖失敗，請稍後再試'
+      } finally {
+        chartLoading.value = false
+      }
+    }
+
+    // 切換期間
+    const changePeriod = (period) => {
+      chartPeriod.value = period
+      loadChart(selectedStock.value, period)
+    }
+
+    // 計算屬性
     const filteredStocks = computed(() => {
       let filtered = stocks.value
-
-      // ... (篩選邏輯)
       if (search.value) {
-          const searchLower = search.value.toLowerCase()
-          filtered = filtered.filter(stock =>
-              stock.symbol.toLowerCase().includes(searchLower) ||
-              stock.name.toLowerCase().includes(searchLower)
-          )
+        const s = search.value.toLowerCase()
+        filtered = filtered.filter(st =>
+          st.symbol.toLowerCase().includes(s) || st.name.toLowerCase().includes(s)
+        )
       }
-      if (marketFilter.value) {
-          filtered = filtered.filter(stock => stock.market === marketFilter.value)
-      }
-      if (industryFilter.value) {
-          filtered = filtered.filter(stock => stock.industry === industryFilter.value)
-      }
+      if (marketFilter.value) filtered = filtered.filter(st => st.market === marketFilter.value)
+      if (industryFilter.value) filtered = filtered.filter(st => st.industry === industryFilter.value)
       if (changeFilter.value) {
-          if (changeFilter.value === '上漲') {
-              filtered = filtered.filter(stock => stock.change > 0)
-          } else if (changeFilter.value === '下跌') {
-              filtered = filtered.filter(stock => stock.change < 0)
-          } else if (changeFilter.value === '平盤') {
-              filtered = filtered.filter(stock => stock.change === 0)
-          }
+        if (changeFilter.value === '上漲') filtered = filtered.filter(st => st.change > 0)
+        else if (changeFilter.value === '下跌') filtered = filtered.filter(st => st.change < 0)
+        else if (changeFilter.value === '平盤') filtered = filtered.filter(st => st.change === 0)
       }
-
       return filtered
     })
 
-    // 統計資料
     const totalStocks = computed(() => stocks.value.length)
-    const upCount = computed(() => stocks.value.filter(s => s.change > 0).length)
-    const downCount = computed(() => stocks.value.filter(s => s.change < 0).length)
-    const flatCount = computed(() => stocks.value.filter(s => s.change === 0).length)
-    const totalVolume = computed(() => {
-      return stocks.value.reduce((sum, stock) => {
-        return sum + (stock.volume || 0)
-      }, 0)
-    })
+    const upCount    = computed(() => stocks.value.filter(s => s.change > 0).length)
+    const downCount  = computed(() => stocks.value.filter(s => s.change < 0).length)
+    const flatCount  = computed(() => stocks.value.filter(s => s.change === 0).length)
+    const totalVolume = computed(() => stocks.value.reduce((sum, s) => sum + (s.volume || 0), 0))
 
-    // ==========================================
     // 方法
-    // ==========================================
-
-    /**
-     * 載入股票資料 (最終版本，無強制測試邏輯)
-     */
     const loadStocks = async () => {
       loading.value = true
       errorMessage.value = ''
       showError.value = false
-
       try {
         const response = await axios.get('stocks', {
-          params: {
-            per_page: 1000,
-            is_active: true,
-            has_prices: true
-          }
+          params: { per_page: 1000, is_active: true, has_prices: true }
         })
 
         let fetchedStocks = []
-        if (response.data.success && response.data.data && response.data.data.data) {
+        if (response.data.success && response.data.data?.data) {
           fetchedStocks = response.data.data.data
         }
 
-        // 轉換資料格式
         stocks.value = fetchedStocks.map(stock => {
-          const latestPrice = stock.latest_price
-
+          const lp = stock.latest_price
           return {
             id: stock.id,
             symbol: stock.symbol,
             name: stock.name,
             market: stock.exchange || 'N/A',
             industry: stock.industry || 'N/A',
-            // 價格資訊
-            price: latestPrice ? parseFloat(latestPrice.close) : null,
-            open: latestPrice ? parseFloat(latestPrice.open) : null,
-            high: latestPrice ? parseFloat(latestPrice.high) : null,
-            low: latestPrice ? parseFloat(latestPrice.low) : null,
-            volume: latestPrice ? parseInt(latestPrice.volume) : null,
-            // 這裡使用後端計算的 change_percent
-            change: latestPrice ? parseFloat(latestPrice.change_percent) : null,
-            trade_date: latestPrice ? latestPrice.trade_date : null,
-            // 其他資訊
+            price:      lp ? parseFloat(lp.close)          : null,
+            open:       lp ? parseFloat(lp.open)           : null,
+            high:       lp ? parseFloat(lp.high)           : null,
+            low:        lp ? parseFloat(lp.low)            : null,
+            volume:     lp ? parseInt(lp.volume)           : null,
+            change:     lp ? parseFloat(lp.change_percent) : null,
+            trade_date: lp ? lp.trade_date                 : null,
             is_active: stock.is_active
           }
         })
 
-        // 提取產業列表
         const uniqueIndustries = [...new Set(stocks.value.map(s => s.industry).filter(i => i && i !== 'N/A'))]
         industries.value = uniqueIndustries.sort()
-
-        // 更新最後更新時間
         lastUpdateTime.value = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
         if (stocks.value.length === 0) {
-            errorMessage.value = 'API 連線成功，但資料庫中沒有滿足條件的股票報價。請檢查資料匯入。'
-            showError.value = true
+          errorMessage.value = 'API 連線成功，但資料庫中沒有滿足條件的股票報價。請檢查資料匯入。'
+          showError.value = true
         }
-
-        console.log('股票資料載入成功:', stocks.value.length, '筆')
-
       } catch (error) {
-        console.error('載入股票資料失敗 (Catch Block):', error)
         errorMessage.value = `載入資料失敗: ${error.response?.data?.message || error.message}`
         showError.value = true
       } finally {
@@ -446,146 +535,58 @@ export default {
       }
     }
 
-    /**
-     * 更新資料
-     */
-    const refreshData = async () => {
-      await loadStocks()
-    }
+    const refreshData = () => loadStocks()
 
-    /**
-     * 格式化成交量
-     */
     const formatVolume = (volume) => {
       if (!volume) return '0'
-
-      if (volume >= 100000000) {
-        return (volume / 100000000).toFixed(2) + '億'
-      } else if (volume >= 10000) {
-        return (volume / 10000).toFixed(0) + '萬'
-      }
+      if (volume >= 100000000) return (volume / 100000000).toFixed(2) + '億'
+      if (volume >= 10000)     return (volume / 10000).toFixed(0) + '萬'
       return volume.toLocaleString()
     }
 
-    /**
-     * 格式化日期
-     */
     const formatDate = (date) => {
       if (!date) return 'N/A'
-      const d = new Date(date)
-      return d.toLocaleDateString('zh-TW', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      })
+      return new Date(date).toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' })
     }
 
-    /**
-     * 取得漲跌顏色
-     */
-    const getChangeColor = (change) => {
-      if (change > 0) return 'red'
-      if (change < 0) return 'green'
-      return 'grey'
-    }
+    const getChangeColor   = (c) => c > 0 ? 'red' : c < 0 ? 'green' : 'grey'
+    const getPriceTextClass = (c) => c > 0 ? 'text-red' : c < 0 ? 'text-green' : 'text-grey'
 
-    /**
-     * 取得價格文字顏色類別
-     */
-    const getPriceTextClass = (change) => {
-      if (change > 0) return 'text-red'
-      if (change < 0) return 'text-green'
-      return 'text-grey'
-    }
-
-    /**
-     * 查看股票詳情
-     */
+    // ★ 點眼睛開詳情，同時自動載入走勢圖
     const viewStockDetail = (stock) => {
       selectedStock.value = stock
+      chartPeriod.value = '3m'
       detailDialog.value = true
+      // 等 dialog 渲染完再載入圖表
+      nextTick(() => loadChart(stock, '3m'))
     }
 
-    /**
-     * 查看走勢圖
-     */
-    const viewChart = (stock) => {
-      console.log('查看走勢圖:', stock)
-    }
-
-    /**
-     * 選擇權分析
-     */
     const calculate = (stock) => {
-      router.push({
-        name: 'BlackScholes',
-        query: { symbol: stock.symbol }
-      })
+      router.push({ name: 'BlackScholes', query: { symbol: stock.symbol } })
     }
 
-    // ==========================================
-    // 生命週期
-    // ==========================================
-    onMounted(() => {
-      loadStocks()
-    })
+    onMounted(() => loadStocks())
 
-    // ==========================================
-    // 返回
-    // ==========================================
     return {
-      // 狀態
-      loading,
-      stocks,
-      search,
-      marketFilter,
-      industryFilter,
-      changeFilter,
-      markets,
-      industries,
-      changeOptions,
-      headers,
-      detailDialog,
-      selectedStock,
-      lastUpdateTime,
-      showError,
-      errorMessage,
-      // 計算屬性
-      filteredStocks,
-      totalStocks,
-      upCount,
-      downCount,
-      flatCount,
-      totalVolume,
+      loading, stocks, search, marketFilter, industryFilter, changeFilter,
+      markets, industries, changeOptions, headers,
+      detailDialog, selectedStock, lastUpdateTime, showError, errorMessage,
+      filteredStocks, totalStocks, upCount, downCount, flatCount, totalVolume,
+      // 走勢圖
+      stockChartCanvas, chartLoading, chartError, chartPeriod, periods,
       // 方法
-      loadStocks,
-      refreshData,
-      formatVolume,
-      formatDate,
-      getChangeColor,
-      getPriceTextClass,
-      viewStockDetail,
-      viewChart,
-      calculate
+      loadStocks, refreshData, formatVolume, formatDate,
+      getChangeColor, getPriceTextClass,
+      viewStockDetail, calculate,
+      changePeriod, destroyChart,
     }
   }
 }
 </script>
 
 <style scoped>
-.stocks-page {
-  padding: 16px;
-}
-
-.text-red {
-  color: rgb(244, 67, 54) !important;
-}
-
-.text-green {
-  color: rgb(76, 175, 80) !important;
-}
-
-.text-grey {
-  color: rgb(158, 158, 158) !important;
-}
+.stocks-page { padding: 16px; }
+.text-red   { color: rgb(244, 67, 54)  !important; }
+.text-green { color: rgb(76, 175, 80)  !important; }
+.text-grey  { color: rgb(158, 158, 158) !important; }
 </style>
