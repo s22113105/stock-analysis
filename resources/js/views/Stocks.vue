@@ -145,7 +145,6 @@
         <v-divider></v-divider>
 
         <v-card-text>
-          <!-- 價格資訊 -->
           <v-row class="my-3">
             <v-col cols="6">
               <div class="text-subtitle-2 text-grey">當前價格</div>
@@ -238,8 +237,8 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Chart, registerables } from 'chart.js'
-import 'chartjs-chart-financial'
 import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial'
+import 'chartjs-adapter-date-fns'
 import axios from 'axios'
 
 Chart.register(...registerables, CandlestickController, CandlestickElement)
@@ -283,7 +282,7 @@ export default {
     const chartError = ref('')
     const chartPeriod = ref('3m')
     let chartInstance = null
-    let cachedPrices = []  // 快取全部資料，切換期間不用重打 API
+    let cachedPrices = []
 
     const periods = [
       { label: '1M', value: '1m' },
@@ -311,7 +310,6 @@ export default {
       destroyChart()
       const ctx = stockChartCanvas.value.getContext('2d')
 
-      // 轉成 K 線格式 { x, o, h, l, c }
       const ohlcData = priceList.map(p => ({
         x: new Date(p.trade_date).getTime(),
         o: parseFloat(p.open)  || 0,
@@ -327,8 +325,8 @@ export default {
             label: `${stock.symbol} K線`,
             data: ohlcData,
             color: {
-              up:        '#ef5350',  // 台股紅漲
-              down:      '#26a69a',  // 台股綠跌
+              up:        '#ef5350',
+              down:      '#26a69a',
               unchanged: '#999999',
             },
             borderColor: {
@@ -381,12 +379,10 @@ export default {
       chartError.value = ''
 
       try {
-        // 只在第一次或換股票時打 API，切換期間用快取
         if (cachedPrices.length === 0) {
           const response = await axios.get(`stocks/${stock.id}/prices`, {
             params: { per_page: 999 }
           })
-
           if (!response.data.success) {
             chartError.value = response.data.message || '無法載入資料'
             return
@@ -399,7 +395,6 @@ export default {
         const sliced = cachedPrices.slice(-days)
 
         await drawCandlestick(sliced, stock)
-
       } catch (err) {
         console.error('載入K線圖失敗:', err)
         chartError.value = '載入K線圖失敗，請稍後再試'
@@ -419,7 +414,6 @@ export default {
       })
     }
 
-    // 計算屬性
     const filteredStocks = computed(() => {
       let filtered = stocks.value
       if (search.value) {
@@ -509,7 +503,7 @@ export default {
     const viewStockDetail = (stock) => {
       selectedStock.value = stock
       chartPeriod.value = '3m'
-      cachedPrices = []  // 換股票清空快取
+      cachedPrices = []
       detailDialog.value = true
       nextTick(() => loadChart(stock, '3m'))
     }
