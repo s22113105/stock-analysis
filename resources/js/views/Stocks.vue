@@ -348,7 +348,7 @@ export default {
                     return
                 }
 
-                const priceList = response.data.data?.data || response.data.data || []
+                const priceList = response.data.data?.prices || []
                 const labels = priceList.map(p => p.trade_date?.slice(0, 10) || '')
                 const prices = priceList.map(p => parseFloat(p.close))
 
