@@ -31,7 +31,6 @@ class AdminController extends Controller
     {
         try {
             $overview = [
-                // 系統資訊
                 'system' => [
                     'php_version' => PHP_VERSION,
                     'laravel_version' => app()->version(),
@@ -39,8 +38,6 @@ class AdminController extends Controller
                     'debug_mode' => config('app.debug'),
                     'timezone' => config('app.timezone'),
                 ],
-
-                // 資料庫統計
                 'database' => [
                     'stocks' => DB::table('stocks')->count(),
                     'stock_prices' => DB::table('stock_prices')->count(),
@@ -50,22 +47,16 @@ class AdminController extends Controller
                     'backtest_results' => DB::table('backtest_results')->count(),
                     'database_size' => $this->getDatabaseSize(),
                 ],
-
-                // Redis 狀態
                 'redis' => [
                     'connected' => $this->checkRedisConnection(),
                     'memory_usage' => $this->getRedisMemoryUsage(),
                     'keys_count' => $this->getRedisKeysCount(),
                 ],
-
-                // Queue 狀態
                 'queue' => [
                     'driver' => config('queue.default'),
                     'pending_jobs' => $this->getQueueJobsCount('default'),
                     'failed_jobs' => DB::table('failed_jobs')->count(),
                 ],
-
-                // 最後更新時間
                 'last_updates' => [
                     'stock_prices' => DB::table('stock_prices')->max('updated_at'),
                     'option_prices' => DB::table('option_prices')->max('updated_at'),
@@ -78,9 +69,7 @@ class AdminController extends Controller
                 'data' => $overview
             ]);
         } catch (\Exception $e) {
-            Log::error('系統總覽查詢失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('系統總覽查詢失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -90,16 +79,16 @@ class AdminController extends Controller
     }
 
     /**
-     * 手動觸發股票資料爬蟲
+     * 手動觸發股票資料爬蟲（批次模式，支援日期範圍）
      *
      * POST /api/admin/jobs/trigger-stock-crawler
      */
     public function triggerStockCrawler(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'symbols' => 'nullable|string',
-            'days'    => 'nullable|integer|min:1|max:365',
-            'sync'    => 'nullable|boolean',
+            'symbols'    => 'nullable|string',
+            'start_date' => 'required|date',
+            'end_date'   => 'required|date|after_or_equal:start_date',
         ]);
 
         if ($validator->fails()) {
@@ -109,21 +98,21 @@ class AdminController extends Controller
         try {
             $defaultSymbols = '2330,2317,2454,2412,2882,2303,2308,2886,2884,1301,1303,2002,3045,2881,2891';
             $symbolsInput   = $request->input('symbols', $defaultSymbols);
-            $days           = (int) $request->input('days', 180);
-            $sync           = $request->boolean('sync', true);
+            $startDate      = Carbon::parse($request->input('start_date'));
+            $endDate        = Carbon::parse($request->input('end_date'));
 
+            // 解析股票代碼，空白則用預設 15 檔
             $symbols = array_filter(array_map('trim', explode(',', $symbolsInput)));
             if (empty($symbols)) {
                 $symbols = explode(',', $defaultSymbols);
             }
 
-            // 計算不重複的月份
+            // 計算日期範圍內所有不重複月份
             $months = [];
-            for ($i = 0; $i < $days; $i++) {
-                $date = Carbon::now()->subDays($i);
-                if ($date->isWeekend()) continue;
-                $ym = $date->format('Y-m');
-                if (!in_array($ym, $months)) $months[] = $ym;
+            $cur = $startDate->copy()->startOfMonth();
+            while ($cur->lte($endDate)) {
+                $months[] = $cur->format('Y-m');
+                $cur->addMonth();
             }
 
             $dispatched = 0;
@@ -131,12 +120,15 @@ class AdminController extends Controller
 
             foreach ($symbols as $symbol) {
                 foreach ($months as $ym) {
+                    // 用該月最後一天作為代表日期
                     $date = Carbon::createFromFormat('Y-m', $ym)->endOfMonth()->format('Y-m-d');
+
                     Artisan::call('crawler:stocks', [
                         '--symbol' => $symbol,
                         '--date'   => $date,
-                        '--sync'   => $sync,
+                        '--sync'   => true,
                     ]);
+
                     $output = trim(Artisan::output());
                     $logs[] = "[{$symbol} {$ym}] " . ($output ?: '已觸發');
                     $dispatched++;
@@ -145,15 +137,15 @@ class AdminController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => "已觸發 {$dispatched} 個任務（{$days} 天 / " . count($symbols) . " 檔股票）",
+                'message' => "已觸發 {$dispatched} 個任務（" . count($symbols) . " 檔 × " . count($months) . " 個月）",
                 'data'    => [
-                    'symbols'    => $symbols,
-                    'days'       => $days,
+                    'symbols'    => array_values($symbols),
                     'months'     => $months,
                     'dispatched' => $dispatched,
                     'logs'       => array_slice($logs, 0, 30),
                 ]
             ]);
+
         } catch (\Exception $e) {
             Log::error('批次股票爬蟲觸發失敗', ['error' => $e->getMessage()]);
             return response()->json(['success' => false, 'message' => '觸發失敗: ' . $e->getMessage()], 500);
@@ -192,9 +184,7 @@ class AdminController extends Controller
                 'date' => $date
             ]);
         } catch (\Exception $e) {
-            Log::error('選擇權爬蟲觸發失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('選擇權爬蟲觸發失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -236,9 +226,7 @@ class AdminController extends Controller
                 'data' => $jobs
             ]);
         } catch (\Exception $e) {
-            Log::error('Queue 任務查詢失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('Queue 任務查詢失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -263,10 +251,7 @@ class AdminController extends Controller
                 'exit_code' => $exitCode
             ]);
         } catch (\Exception $e) {
-            Log::error('重試 Job 失敗', [
-                'job_id' => $id,
-                'error' => $e->getMessage()
-            ]);
+            Log::error('重試 Job 失敗', ['job_id' => $id, 'error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -325,10 +310,7 @@ class AdminController extends Controller
                 'commands' => $commands
             ]);
         } catch (\Exception $e) {
-            Log::error('清除快取失敗', [
-                'type' => $request->input('type'),
-                'error' => $e->getMessage()
-            ]);
+            Log::error('清除快取失敗', ['type' => $request->input('type'), 'error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -372,7 +354,6 @@ class AdminController extends Controller
             $logLines = file($logFile);
             $recentLogs = array_slice($logLines, -$lines);
 
-            // 如果指定 level，進行過濾
             if ($level) {
                 $recentLogs = array_filter($recentLogs, function ($line) use ($level) {
                     return stripos($line, ".$level") !== false;
@@ -388,9 +369,7 @@ class AdminController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error('讀取日誌失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('讀取日誌失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -407,7 +386,6 @@ class AdminController extends Controller
     public function optimizeDatabase(): JsonResponse
     {
         try {
-            // 執行資料庫優化命令
             Artisan::call('optimize');
             Artisan::call('config:cache');
             Artisan::call('route:cache');
@@ -418,9 +396,7 @@ class AdminController extends Controller
                 'message' => '資料庫優化完成'
             ]);
         } catch (\Exception $e) {
-            Log::error('資料庫優化失敗', [
-                'error' => $e->getMessage()
-            ]);
+            Log::error('資料庫優化失敗', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
@@ -431,9 +407,6 @@ class AdminController extends Controller
 
     // ============ 私有輔助方法 ============
 
-    /**
-     * 檢查 Redis 連線
-     */
     private function checkRedisConnection(): bool
     {
         try {
@@ -444,9 +417,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * 取得 Redis 記憶體使用量
-     */
     private function getRedisMemoryUsage(): ?string
     {
         try {
@@ -457,9 +427,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * 取得 Redis Keys 數量
-     */
     private function getRedisKeysCount(): int
     {
         try {
@@ -469,16 +436,12 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * 取得資料庫大小
-     */
     private function getDatabaseSize(): ?string
     {
         try {
             $database = config('database.connections.mysql.database');
             $result = DB::select("
-                SELECT
-                    ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb
+                SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb
                 FROM information_schema.TABLES
                 WHERE table_schema = ?
             ", [$database]);
@@ -489,9 +452,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * 取得 Queue Jobs 數量
-     */
     private function getQueueJobsCount(string $queue, string $type = 'ready'): int
     {
         try {
