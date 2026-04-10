@@ -24,11 +24,11 @@ class TwseApiService
     {
         // 舊版 API (用於特定功能)
         $this->baseUrl = config('services.twse.base_url', 'https://www.twse.com.tw');
-        
+
         // OpenAPI (主要使用)
         // ✅ 修正: 加上 /v1 版本號
         $this->openApiUrl = 'https://openapi.twse.com.tw/v1';
-        
+
         $this->timeout = config('services.twse.timeout', 30);
         $this->retries = config('services.twse.retries', 3);
     }
@@ -53,8 +53,8 @@ class TwseApiService
             // OpenAPI URL
             // 注意: STOCK_DAY_ALL 不需要 date 參數，它總是返回最新資料
             $url = "{$this->openApiUrl}/exchangeReport/STOCK_DAY_ALL";
-            
-            $params = []; 
+
+            $params = [];
 
             Log::info('發送 TWSE OpenAPI 請求', [
                 'url' => $url,
@@ -97,7 +97,6 @@ class TwseApiService
             ]);
 
             return collect();
-
         } catch (\Exception $e) {
             Log::error("TWSE API 請求失敗", [
                 'error' => $e->getMessage(),
@@ -116,21 +115,22 @@ class TwseApiService
      */
     protected function transformStockData($item, $dateString)
     {
-        // OpenAPI 欄位對應
-        // 注意: OpenAPI 的欄位名稱可能是英文
         return [
             'symbol' => $item['Code'] ?? $item['股票代號'] ?? '',
-            'name' => $item['Name'] ?? $item['股票名稱'] ?? '',
-            // 如果 API 沒有回傳日期，就使用傳入的日期
-            'trade_date' => $this->formatDate($dateString),
-            'volume' => $this->parseNumber($item['TradeVolume'] ?? $item['成交股數'] ?? 0),
-            'turnover' => $this->parseNumber($item['TradeValue'] ?? $item['成交金額'] ?? 0),
-            'open' => $this->parsePrice($item['OpeningPrice'] ?? $item['開盤價'] ?? 0),
-            'high' => $this->parsePrice($item['HighestPrice'] ?? $item['最高價'] ?? 0),
-            'low' => $this->parsePrice($item['LowestPrice'] ?? $item['最低價'] ?? 0),
-            'close' => $this->parsePrice($item['ClosingPrice'] ?? $item['收盤價'] ?? 0),
-            'change' => $this->parsePrice($item['Change'] ?? $item['漲跌價差'] ?? 0),
-            'transaction' => $this->parseNumber($item['Transaction'] ?? $item['成交筆數'] ?? 0),
+            'name'   => $item['Name'] ?? $item['股票名稱'] ?? '',
+            // ✅ 優先使用 API 回傳的日期（STOCK_DAY_ALL 有 Date 欄位）
+            // 若 API 沒有日期欄位，才用傳入的 dateString 作為 fallback
+            'trade_date'   => $this->formatDate(
+                $item['Date'] ?? $item['TradeDate'] ?? $dateString
+            ),
+            'volume'       => $this->parseNumber($item['TradeVolume'] ?? $item['成交股數'] ?? 0),
+            'turnover'     => $this->parseNumber($item['TradeValue'] ?? $item['成交金額'] ?? 0),
+            'open'         => $this->parsePrice($item['OpeningPrice'] ?? $item['開盤價'] ?? 0),
+            'high'         => $this->parsePrice($item['HighestPrice'] ?? $item['最高價'] ?? 0),
+            'low'          => $this->parsePrice($item['LowestPrice'] ?? $item['最低價'] ?? 0),
+            'close'        => $this->parsePrice($item['ClosingPrice'] ?? $item['收盤價'] ?? 0),
+            'change'       => $this->parsePrice($item['Change'] ?? $item['漲跌價差'] ?? 0),
+            'transactions' => $this->parseNumber($item['Transaction'] ?? $item['成交筆數'] ?? 0),
         ];
     }
 
@@ -143,7 +143,7 @@ class TwseApiService
     public function getStockDay($symbol, $date = null)
     {
         $endpoint = "/exchangeReport/STOCK_DAY";
-        
+
         // 如果有指定日期，使用該日期，否則使用當前日期
         $targetDate = $date ? Carbon::parse($date) : Carbon::now();
         $dateString = $targetDate->format('Ymd');
@@ -169,7 +169,7 @@ class TwseApiService
                     'low' => $this->parsePrice($item[5]),
                     'close' => $this->parsePrice($item[6]),
                     'change' => $this->parsePrice($item[7]),
-                    'transaction' => $this->parseNumber($item[8]),
+                    'transactions' => $this->parseNumber($item[8]),
                 ];
             });
         }
@@ -234,9 +234,9 @@ class TwseApiService
                 'Referer' => 'https://www.twse.com.tw/zh/page/trading/exchange/STOCK_DAY.html',
                 'X-Requested-With' => 'XMLHttpRequest',
             ])
-            ->timeout($this->timeout)
-            ->retry($this->retries, 2000) // 增加 retry 間隔到 2 秒
-            ->get($url, $params);
+                ->timeout($this->timeout)
+                ->retry($this->retries, 2000) // 增加 retry 間隔到 2 秒
+                ->get($url, $params);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -298,10 +298,10 @@ class TwseApiService
             $rocYear = intval($matches[1]);
             $month = str_pad($matches[2], 2, '0', STR_PAD_LEFT);
             $day = str_pad($matches[3], 2, '0', STR_PAD_LEFT);
-            
+
             // 民國年轉西元年
             $adYear = $rocYear + 1911;
-            
+
             return "{$adYear}-{$month}-{$day}";
         }
 
@@ -319,12 +319,12 @@ class TwseApiService
         if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $dateString, $matches)) {
             return "{$matches[1]}-{$matches[2]}-{$matches[3]}";
         }
-        
+
         // 如果已經是 Y-m-d 格式，直接返回
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateString)) {
             return $dateString;
         }
-        
+
         // 嘗試使用 Carbon 解析
         try {
             return Carbon::parse($dateString)->format('Y-m-d');
@@ -385,17 +385,17 @@ class TwseApiService
         // 使用較早的日期測試 (避免當天資料未更新)
         $testDate = $date ?? Carbon::now()->subDays(3)->format('Y-m-d');
         $dateString = Carbon::parse($testDate)->format('Ymd');
-        
+
         $data = $this->getStockDayAll($dateString);
-        
+
         if ($data->isEmpty()) {
             return false;
         }
 
         // 如果指定股票，檢查該股票是否在資料中
         if ($symbol) {
-            return $data->contains('symbol', $symbol) || 
-                   $data->contains('Code', $symbol);
+            return $data->contains('symbol', $symbol) ||
+                $data->contains('Code', $symbol);
         }
 
         return true;
@@ -410,21 +410,21 @@ class TwseApiService
     {
         for ($i = 3; $i <= $maxDaysBack; $i++) {
             $date = Carbon::now()->subDays($i);
-            
+
             // 跳過週末
             if ($date->isWeekend()) {
                 continue;
             }
-            
+
             $dateString = $date->format('Ymd');
             $data = $this->getStockDayAll($dateString);
-            
+
             if (!$data->isEmpty()) {
                 Log::info("找到有資料的日期: {$date->format('Y-m-d')}");
                 return $date->format('Y-m-d');
             }
         }
-        
+
         return null;
     }
 
@@ -437,15 +437,15 @@ class TwseApiService
     public function getBatchStockData(array $symbols, $date = null)
     {
         $targetDate = $date ?? $this->getLatestAvailableDate();
-        
+
         if (!$targetDate) {
             Log::error("無法找到有資料的日期");
             return collect();
         }
-        
+
         $dateString = Carbon::parse($targetDate)->format('Ymd');
         $allData = $this->getStockDayAll($dateString);
-        
+
         // 過濾出指定的股票
         return $allData->filter(function ($item) use ($symbols) {
             $symbol = $item['symbol'] ?? $item['Code'] ?? '';

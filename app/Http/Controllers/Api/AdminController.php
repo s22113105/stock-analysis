@@ -97,57 +97,66 @@ class AdminController extends Controller
     public function triggerStockCrawler(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'symbol' => 'nullable|string',
-            'date' => 'nullable|date',
-            'sync' => 'nullable|boolean',
+            'symbols' => 'nullable|string',
+            'days'    => 'nullable|integer|min:1|max:365',
+            'sync'    => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'errors' => $validator->errors()
-            ], 422);
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
         try {
-            $symbol = $request->input('symbol');
-            $date = $request->input('date', now()->format('Y-m-d'));
-            $sync = $request->input('sync', false);
+            $defaultSymbols = '2330,2317,2454,2412,2882,2303,2308,2886,2884,1301,1303,2002,3045,2881,2891';
+            $symbolsInput   = $request->input('symbols', $defaultSymbols);
+            $days           = (int) $request->input('days', 180);
+            $sync           = $request->boolean('sync', true);
 
-            if ($symbol) {
-                // 單一股票
-                FetchStockDataJob::dispatch($symbol, $date, $sync);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => "股票 {$symbol} 爬蟲任務已加入佇列",
-                    'data' => [
-                        'symbol' => $symbol,
-                        'date' => $date,
-                        'sync' => $sync
-                    ]
-                ]);
-            } else {
-                // 全部股票
-                $exitCode = Artisan::call('crawler:stocks', [
-                    '--date' => $date,
-                ]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => '所有股票爬蟲任務已觸發',
-                    'exit_code' => $exitCode
-                ]);
+            $symbols = array_filter(array_map('trim', explode(',', $symbolsInput)));
+            if (empty($symbols)) {
+                $symbols = explode(',', $defaultSymbols);
             }
-        } catch (\Exception $e) {
-            Log::error('股票爬蟲觸發失敗', [
-                'error' => $e->getMessage()
-            ]);
+
+            // 計算不重複的月份
+            $months = [];
+            for ($i = 0; $i < $days; $i++) {
+                $date = Carbon::now()->subDays($i);
+                if ($date->isWeekend()) continue;
+                $ym = $date->format('Y-m');
+                if (!in_array($ym, $months)) $months[] = $ym;
+            }
+
+            $dispatched = 0;
+            $logs = [];
+
+            foreach ($symbols as $symbol) {
+                foreach ($months as $ym) {
+                    $date = Carbon::createFromFormat('Y-m', $ym)->endOfMonth()->format('Y-m-d');
+                    Artisan::call('crawler:stocks', [
+                        '--symbol' => $symbol,
+                        '--date'   => $date,
+                        '--sync'   => $sync,
+                    ]);
+                    $output = trim(Artisan::output());
+                    $logs[] = "[{$symbol} {$ym}] " . ($output ?: '已觸發');
+                    $dispatched++;
+                }
+            }
 
             return response()->json([
-                'success' => false,
-                'message' => '觸發失敗: ' . $e->getMessage()
-            ], 500);
+                'success' => true,
+                'message' => "已觸發 {$dispatched} 個任務（{$days} 天 / " . count($symbols) . " 檔股票）",
+                'data'    => [
+                    'symbols'    => $symbols,
+                    'days'       => $days,
+                    'months'     => $months,
+                    'dispatched' => $dispatched,
+                    'logs'       => array_slice($logs, 0, 30),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('批次股票爬蟲觸發失敗', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => '觸發失敗: ' . $e->getMessage()], 500);
         }
     }
 
@@ -365,7 +374,7 @@ class AdminController extends Controller
 
             // 如果指定 level，進行過濾
             if ($level) {
-                $recentLogs = array_filter($recentLogs, function($line) use ($level) {
+                $recentLogs = array_filter($recentLogs, function ($line) use ($level) {
                     return stripos($line, ".$level") !== false;
                 });
             }

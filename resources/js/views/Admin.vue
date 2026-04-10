@@ -64,10 +64,10 @@
 
           <v-card-text>
             <v-window v-model="currentTab">
+
               <!-- 系統總覽標籤 -->
               <v-window-item value="overview">
                 <v-row>
-                  <!-- 系統資訊 -->
                   <v-col cols="12" md="6">
                     <v-card variant="outlined">
                       <v-card-title>系統資訊</v-card-title>
@@ -106,7 +106,6 @@
                     </v-card>
                   </v-col>
 
-                  <!-- Redis 狀態 -->
                   <v-col cols="12" md="6">
                     <v-card variant="outlined">
                       <v-card-title>Redis 狀態</v-card-title>
@@ -137,7 +136,6 @@
                     </v-card>
                   </v-col>
 
-                  <!-- 資料庫統計 -->
                   <v-col cols="12">
                     <v-card variant="outlined">
                       <v-card-title>資料庫統計</v-card-title>
@@ -181,48 +179,103 @@
               <!-- Job 管理標籤 -->
               <v-window-item value="jobs">
                 <v-row>
-                  <!-- 手動觸發爬蟲 -->
-                  <v-col cols="12" md="6">
+
+                  <!-- ★ 股票資料批次爬蟲（改版） -->
+                  <v-col cols="12">
                     <v-card variant="outlined">
-                      <v-card-title>📊 股票資料爬蟲</v-card-title>
+                      <v-card-title>
+                        <v-icon start>mdi-chart-line</v-icon>
+                        股票資料批次爬蟲
+                        <v-chip size="small" color="info" class="ml-2">對應 fetch_real_data.sh</v-chip>
+                      </v-card-title>
                       <v-card-text>
-                        <v-text-field
-                          v-model="stockCrawlerSymbol"
-                          label="股票代碼 (選填)"
-                          placeholder="例如: 2330"
-                          density="compact"
-                          class="mb-2"
-                        ></v-text-field>
-                        <v-text-field
-                          v-model="stockCrawlerDate"
-                          label="日期"
-                          type="date"
-                          density="compact"
-                          class="mb-2"
-                        ></v-text-field>
-                        <v-checkbox
-                          v-model="stockCrawlerSync"
-                          label="同步模式 (立即執行)"
-                          density="compact"
-                        ></v-checkbox>
+                        <v-row>
+                          <!-- 股票代碼輸入 -->
+                          <v-col cols="12">
+                            <v-textarea
+                              v-model="stockCrawlerSymbols"
+                              label="股票代碼（逗號分隔）"
+                              placeholder="2330,2317,2454,2412,2882,2303,2308,2886,2884,1301,1303,2002,3045,2881,2891"
+                              rows="2"
+                              hint="留空則使用預設 15 檔權值股"
+                              persistent-hint
+                              density="compact"
+                            ></v-textarea>
+                          </v-col>
+
+                          <!-- 天數 -->
+                          <v-col cols="12" md="4">
+                            <v-text-field
+                              v-model.number="stockCrawlerDays"
+                              label="抓取天數"
+                              type="number"
+                              min="1"
+                              max="365"
+                              hint="預設 180 天（約 6 個月）"
+                              persistent-hint
+                              density="compact"
+                            ></v-text-field>
+                          </v-col>
+
+                          <!-- 預覽 -->
+                          <v-col cols="12" md="8" class="d-flex align-center">
+                            <v-alert type="info" variant="tonal" density="compact" class="w-100">
+                              預計觸發：<strong>{{ crawlerPreview }}</strong> 個任務
+                              （{{ stockCrawlerSymbols ? stockCrawlerSymbols.split(',').filter(s => s.trim()).length : 15 }} 檔 ×
+                              約 {{ Math.ceil((stockCrawlerDays || 180) / 30) }} 個月）
+                            </v-alert>
+                          </v-col>
+
+                          <!-- 執行進度提示 -->
+                          <v-col cols="12" v-if="stockCrawlerLoading">
+                            <v-alert type="warning" variant="tonal" density="compact">
+                              <v-progress-circular indeterminate size="16" class="mr-2"></v-progress-circular>
+                              爬蟲執行中，請稍候，這可能需要數分鐘...
+                            </v-alert>
+                          </v-col>
+
+                          <!-- 執行結果 log -->
+                          <v-col cols="12" v-if="crawlerLogs.length > 0">
+                            <div class="text-caption text-grey mb-1">執行結果（前 30 筆）</div>
+                            <v-sheet
+                              class="pa-3"
+                              color="grey-darken-4"
+                              rounded
+                              style="max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px;"
+                            >
+                              <div v-for="(log, i) in crawlerLogs" :key="i" class="text-white">{{ log }}</div>
+                            </v-sheet>
+                          </v-col>
+                        </v-row>
                       </v-card-text>
                       <v-card-actions>
                         <v-btn
                           color="primary"
-                          @click="triggerStockCrawler"
                           :loading="stockCrawlerLoading"
-                          block
+                          :disabled="stockCrawlerLoading"
+                          @click="triggerStockCrawler"
+                          prepend-icon="mdi-play"
                         >
-                          <v-icon start>mdi-play</v-icon>
-                          執行爬蟲
+                          執行批次爬蟲
+                        </v-btn>
+                        <v-btn
+                          variant="text"
+                          :disabled="stockCrawlerLoading"
+                          @click="resetStockCrawler"
+                        >
+                          重設
                         </v-btn>
                       </v-card-actions>
                     </v-card>
                   </v-col>
 
+                  <!-- 選擇權資料爬蟲 -->
                   <v-col cols="12" md="6">
                     <v-card variant="outlined">
-                      <v-card-title>📈 選擇權資料爬蟲</v-card-title>
+                      <v-card-title>
+                        <v-icon start>mdi-finance</v-icon>
+                        選擇權資料爬蟲
+                      </v-card-title>
                       <v-card-text>
                         <v-text-field
                           v-model="optionCrawlerDate"
@@ -237,8 +290,8 @@
                           @click="triggerOptionCrawler"
                           :loading="optionCrawlerLoading"
                           block
+                          prepend-icon="mdi-play"
                         >
-                          <v-icon start>mdi-play</v-icon>
                           執行爬蟲
                         </v-btn>
                       </v-card-actions>
@@ -270,11 +323,7 @@
                             </v-tooltip>
                           </template>
                           <template v-slot:item.actions="{ item }">
-                            <v-btn
-                              size="small"
-                              color="primary"
-                              @click="retryJob(item.id)"
-                            >
+                            <v-btn size="small" color="primary" @click="retryJob(item.id)">
                               重試
                             </v-btn>
                           </template>
@@ -282,6 +331,7 @@
                       </v-card-text>
                     </v-card>
                   </v-col>
+
                 </v-row>
               </v-window-item>
 
@@ -346,6 +396,7 @@
                   </v-card-text>
                 </v-card>
               </v-window-item>
+
             </v-window>
           </v-card-text>
         </v-card>
@@ -360,7 +411,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 
 export default {
@@ -374,11 +425,50 @@ export default {
     const logLevel = ref(null)
     const logsLoading = ref(false)
 
-    // 股票爬蟲表單
-    const stockCrawlerSymbol = ref('')
-    const stockCrawlerDate = ref(new Date().toISOString().split('T')[0])
-    const stockCrawlerSync = ref(false)
+    // ★ 股票爬蟲（批次模式，對應 fetch_real_data.sh）
+    const DEFAULT_SYMBOLS = '2330,2317,2454,2412,2882,2303,2308,2886,2884,1301,1303,2002,3045,2881,2891'
+    const stockCrawlerSymbols = ref(DEFAULT_SYMBOLS)
+    const stockCrawlerDays = ref(180)
     const stockCrawlerLoading = ref(false)
+    const crawlerLogs = ref([])
+
+    // 預覽計算任務數
+    const crawlerPreview = computed(() => {
+      const symbols = stockCrawlerSymbols.value
+        ? stockCrawlerSymbols.value.split(',').filter(s => s.trim()).length
+        : 15
+      const months = Math.ceil((stockCrawlerDays.value || 180) / 30)
+      return symbols * months
+    })
+
+    // 觸發批次爬蟲
+    const triggerStockCrawler = async () => {
+      stockCrawlerLoading.value = true
+      crawlerLogs.value = []
+      try {
+        const response = await axios.post('/admin/jobs/trigger-stock-crawler', {
+          symbols: stockCrawlerSymbols.value || undefined,
+          days: stockCrawlerDays.value,
+          sync: true
+        })
+        showSnackbar(response.data.message, 'success')
+        crawlerLogs.value = response.data.data?.logs || []
+        loadQueueJobs()
+        loadOverview()
+      } catch (error) {
+        console.error('批次爬蟲失敗:', error)
+        showSnackbar('觸發失敗', 'error')
+      } finally {
+        stockCrawlerLoading.value = false
+      }
+    }
+
+    // 重設爬蟲表單
+    const resetStockCrawler = () => {
+      stockCrawlerSymbols.value = DEFAULT_SYMBOLS
+      stockCrawlerDays.value = 180
+      crawlerLogs.value = []
+    }
 
     // 選擇權爬蟲表單
     const optionCrawlerDate = ref(new Date().toISOString().split('T')[0])
@@ -387,37 +477,33 @@ export default {
     // 快取管理
     const cacheLoading = ref({})
     const cacheTypes = ref([
-      { value: 'all', title: '全部快取', description: '清除所有快取' },
+      { value: 'all',    title: '全部快取', description: '清除所有快取' },
       { value: 'config', title: '設定快取', description: '清除設定檔快取' },
-      { value: 'route', title: '路由快取', description: '清除路由快取' },
-      { value: 'view', title: '視圖快取', description: '清除視圖快取' },
-      { value: 'cache', title: '應用快取', description: '清除應用程式快取' },
+      { value: 'route',  title: '路由快取', description: '清除路由快取' },
+      { value: 'view',   title: '視圖快取', description: '清除視圖快取' },
+      { value: 'cache',  title: '應用快取', description: '清除應用程式快取' },
     ])
 
     // 日誌等級
     const logLevels = ref([
-      { value: null, title: '全部' },
-      { value: 'error', title: '錯誤' },
+      { value: null,      title: '全部' },
+      { value: 'error',   title: '錯誤' },
       { value: 'warning', title: '警告' },
-      { value: 'info', title: '資訊' },
-      { value: 'debug', title: '除錯' },
+      { value: 'info',    title: '資訊' },
+      { value: 'debug',   title: '除錯' },
     ])
 
     // 失敗 Jobs 表頭
     const failedJobsHeaders = ref([
-      { title: 'ID', key: 'id', width: '80px' },
-      { title: 'Queue', key: 'queue' },
+      { title: 'ID',       key: 'id',        width: '80px' },
+      { title: 'Queue',    key: 'queue' },
       { title: '錯誤訊息', key: 'exception' },
       { title: '失敗時間', key: 'failed_at' },
-      { title: '操作', key: 'actions', sortable: false, width: '100px' },
+      { title: '操作',     key: 'actions', sortable: false, width: '100px' },
     ])
 
     // Snackbar
-    const snackbar = ref({
-      show: false,
-      message: '',
-      color: 'success'
-    })
+    const snackbar = ref({ show: false, message: '', color: 'success' })
 
     // 載入系統總覽
     const loadOverview = async () => {
@@ -437,25 +523,6 @@ export default {
         queueJobs.value = response.data.data
       } catch (error) {
         console.error('載入 Queue Jobs 失敗:', error)
-      }
-    }
-
-    // 觸發股票爬蟲
-    const triggerStockCrawler = async () => {
-      stockCrawlerLoading.value = true
-      try {
-        const response = await axios.post('/admin/jobs/trigger-stock-crawler', {
-          symbol: stockCrawlerSymbol.value || undefined,
-          date: stockCrawlerDate.value,
-          sync: stockCrawlerSync.value
-        })
-        showSnackbar(response.data.message, 'success')
-        loadQueueJobs()
-      } catch (error) {
-        console.error('觸發股票爬蟲失敗:', error)
-        showSnackbar('觸發股票爬蟲失敗', 'error')
-      } finally {
-        stockCrawlerLoading.value = false
       }
     }
 
@@ -507,10 +574,7 @@ export default {
       logsLoading.value = true
       try {
         const response = await axios.get('/admin/logs', {
-          params: {
-            lines: 200,
-            level: logLevel.value
-          }
+          params: { lines: 200, level: logLevel.value }
         })
         logs.value = response.data.data.logs
       } catch (error) {
@@ -523,11 +587,7 @@ export default {
 
     // 顯示 Snackbar
     const showSnackbar = (message, color = 'success') => {
-      snackbar.value = {
-        show: true,
-        message,
-        color
-      }
+      snackbar.value = { show: true, message, color }
     }
 
     // 格式化數字
@@ -540,8 +600,6 @@ export default {
       loadOverview()
       loadQueueJobs()
       loadLogs()
-
-      // 每 30 秒自動更新一次
       setInterval(() => {
         loadOverview()
         loadQueueJobs()
@@ -555,12 +613,19 @@ export default {
       logs,
       logLevel,
       logsLoading,
-      stockCrawlerSymbol,
-      stockCrawlerDate,
-      stockCrawlerSync,
+      // 批次爬蟲
+      stockCrawlerSymbols,
+      stockCrawlerDays,
       stockCrawlerLoading,
+      crawlerLogs,
+      crawlerPreview,
+      triggerStockCrawler,
+      resetStockCrawler,
+      // 選擇權爬蟲
       optionCrawlerDate,
       optionCrawlerLoading,
+      triggerOptionCrawler,
+      // 其他
       cacheLoading,
       cacheTypes,
       logLevels,
@@ -568,8 +633,6 @@ export default {
       snackbar,
       loadOverview,
       loadQueueJobs,
-      triggerStockCrawler,
-      triggerOptionCrawler,
       retryJob,
       clearCache,
       loadLogs,
