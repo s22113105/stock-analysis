@@ -26,14 +26,10 @@ class FetchOptionDataJob implements ShouldQueue
 
     protected $date;
 
-    /**
-     * 任務最大嘗試次數
-     */
+    /** 任務最大嘗試次數 */
     public $tries = 3;
 
-    /**
-     * 任務超時時間
-     */
+    /** 任務超時時間 */
     public $timeout = 300;
 
     /**
@@ -55,9 +51,7 @@ class FetchOptionDataJob implements ShouldQueue
     ) {
         $startTime = microtime(true);
 
-        Log::info('開始執行選擇權資料爬蟲 (TXO)', [
-            'date' => $this->date
-        ]);
+        Log::info('開始執行選擇權資料爬蟲 (TXO)', ['date' => $this->date]);
 
         try {
             // 檢查是否為交易日
@@ -91,7 +85,7 @@ class FetchOptionDataJob implements ShouldQueue
             Log::info("資料清理完成", [
                 'original' => $rawData->count(),
                 'cleaned'  => $cleanedData->count(),
-                'removed'  => $rawData->count() - $cleanedData->count()
+                'removed'  => $rawData->count() - $cleanedData->count(),
             ]);
 
             // === 步驟 3: 取得 Delta 值 (選用) ===
@@ -102,8 +96,8 @@ class FetchOptionDataJob implements ShouldQueue
             $underlyingPrice = $this->getUnderlyingPrice($this->date);
 
             if (!$underlyingPrice) {
-                Log::warning('無法取得標的價格，價內價外欄位將為 null', [
-                    'date' => $this->date
+                Log::warning('無法取得標的價格，underlying_price 欄位將為 null', [
+                    'date' => $this->date,
                 ]);
             }
 
@@ -116,10 +110,7 @@ class FetchOptionDataJob implements ShouldQueue
 
             // === 步驟 7: 匯出資料 (選用) ===
             if (config('options.export_csv', false)) {
-                $csvPath = $cleaner->exportToCsv(
-                    $cleanedData,
-                    "options_{$this->date}.csv"
-                );
+                $csvPath = $cleaner->exportToCsv($cleanedData, "options_{$this->date}.csv");
                 Log::info('已匯出 CSV', ['path' => $csvPath]);
             }
 
@@ -131,15 +122,16 @@ class FetchOptionDataJob implements ShouldQueue
                 'date'       => $this->date,
                 'duration'   => "{$duration}秒",
                 'processed'  => $cleanedData->count(),
-                'statistics' => $statistics
+                'statistics' => $statistics,
             ]);
+
         } catch (\Exception $e) {
             DB::rollBack();
 
             Log::error('選擇權資料爬蟲執行失敗', [
                 'date'  => $this->date,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             throw $e;
@@ -164,33 +156,21 @@ class FetchOptionDataJob implements ShouldQueue
 
         return Cache::remember($cacheKey, 3600, function () use ($date) {
 
-            // ---- 方法 1: stock_prices 加權指數 ----
             $price = $this->getPriceFromStockPrices($date);
             if ($price) {
-                Log::info('標的價格來源: stock_prices (加權指數)', [
-                    'date'  => $date,
-                    'price' => $price,
-                ]);
+                Log::info('標的價格來源: stock_prices (加權指數)', ['date' => $date, 'price' => $price]);
                 return $price;
             }
 
-            // ---- 方法 2: 期交所 OpenAPI 台指期結算價 ----
             $price = $this->getPriceFromTaifexApi($date);
             if ($price) {
-                Log::info('標的價格來源: 期交所 OpenAPI (TX 期貨)', [
-                    'date'  => $date,
-                    'price' => $price,
-                ]);
+                Log::info('標的價格來源: 期交所 OpenAPI (TX 期貨)', ['date' => $date, 'price' => $price]);
                 return $price;
             }
 
-            // ---- 方法 3: 從選擇權資料反推 ----
             $price = $this->getPriceFromOptionImplied($date);
             if ($price) {
-                Log::info('標的價格來源: 選擇權反推 (估算)', [
-                    'date'  => $date,
-                    'price' => $price,
-                ]);
+                Log::info('標的價格來源: 選擇權反推 (估算)', ['date' => $date, 'price' => $price]);
                 return $price;
             }
 
@@ -199,25 +179,17 @@ class FetchOptionDataJob implements ShouldQueue
         });
     }
 
-    /**
-     * 方法 1：從 stock_prices 取加權指數收盤價
-     * (需要先爬入加權指數，symbol = '^TWII')
-     */
+    /** 方法 1：從 stock_prices 取加權指數收盤價 */
     private function getPriceFromStockPrices(string $date): ?float
     {
-        $price = StockPrice::whereHas('stock', function ($q) {
-                $q->where('symbol', '^TWII');
-            })
+        $price = StockPrice::whereHas('stock', fn($q) => $q->where('symbol', '^TWII'))
             ->where('trade_date', $date)
             ->value('close');
 
         return $price ? (float) $price : null;
     }
 
-    /**
-     * 方法 2：從期交所 OpenAPI 取台指期貨最後成交價
-     * API: https://openapi.taifex.com.tw/v1/DailyMarketReportFut
-     */
+    /** 方法 2：從期交所 OpenAPI 取台指期貨最後成交價 */
     private function getPriceFromTaifexApi(string $date): ?float
     {
         try {
@@ -225,66 +197,44 @@ class FetchOptionDataJob implements ShouldQueue
                 ->withHeaders(['Accept' => 'application/json'])
                 ->get('https://openapi.taifex.com.tw/v1/DailyMarketReportFut');
 
-            if (!$response->successful()) {
-                return null;
-            }
+            if (!$response->successful()) return null;
 
             $data = $response->json();
+            if (empty($data)) return null;
 
-            if (empty($data)) {
-                return null;
-            }
-
-            // 找當日近月台指期 (Contract = TX, 最小到期月份)
             $targetDate = Carbon::parse($date)->format('Y/m/d');
 
             $txFutures = collect($data)->filter(function ($item) use ($targetDate) {
-                $contract    = $item['Contract'] ?? '';
-                $tradeDate   = $item['Date'] ?? '';
-                // 只取 TX (台指期)，排除小台 MTX
+                $contract  = $item['Contract'] ?? '';
+                $tradeDate = $item['Date'] ?? '';
                 return str_starts_with($contract, 'TX')
                     && !str_starts_with($contract, 'TXO')
                     && $tradeDate === $targetDate;
             });
 
-            if ($txFutures->isEmpty()) {
-                return null;
-            }
+            if ($txFutures->isEmpty()) return null;
 
-            // 取近月合約 (到期日最近的)
             $nearest = $txFutures->sortBy('ContractMonth')->first();
             $close   = $nearest['SettlementPrice'] ?? $nearest['Close'] ?? null;
 
             return $close ? (float) str_replace(',', '', $close) : null;
 
         } catch (\Exception $e) {
-            Log::warning('期交所 API 查詢失敗', [
-                'date'  => $date,
-                'error' => $e->getMessage(),
-            ]);
+            Log::warning('期交所 API 查詢失敗', ['date' => $date, 'error' => $e->getMessage()]);
             return null;
         }
     }
 
-    /**
-     * 方法 3：從當日 OptionPrice 找 ATM 附近的 Call+Put 中點推估現貨
-     *
-     * 利用 Put-Call Parity: F ≈ Strike + Call.close - Put.close
-     * 再從期貨價格估算現貨 (忽略利率差，通常誤差 <0.5%)
-     */
+    /** 方法 3：從當日 OptionPrice 以 Put-Call Parity 反推現貨價 */
     private function getPriceFromOptionImplied(string $date): ?float
     {
         try {
-            // 取最近到期日的選擇權
             $nearestExpiry = Option::where('expiry_date', '>=', $date)
                 ->orderBy('expiry_date')
                 ->value('expiry_date');
 
-            if (!$nearestExpiry) {
-                return null;
-            }
+            if (!$nearestExpiry) return null;
 
-            // 找成交量前20大的履約價，挑 Call+Put 都有資料的
             $strikes = OptionPrice::whereHas('option', function ($q) use ($nearestExpiry) {
                     $q->where('expiry_date', $nearestExpiry)->where('underlying', 'TXO');
                 })
@@ -296,29 +246,21 @@ class FetchOptionDataJob implements ShouldQueue
                 ->get()
                 ->groupBy('strike_price');
 
-            if ($strikes->isEmpty()) {
-                return null;
-            }
+            if ($strikes->isEmpty()) return null;
 
-            // 只保留 Call + Put 都有資料的履約價
-            $pairStrikes = $strikes->filter(fn($group) =>
-                $group->where('option_type', 'call')->count() > 0
-                && $group->where('option_type', 'put')->count() > 0
+            $pairStrikes = $strikes->filter(
+                fn($group) => $group->where('option_type', 'call')->count() > 0
+                           && $group->where('option_type', 'put')->count() > 0
             );
 
-            if ($pairStrikes->isEmpty()) {
-                return null;
-            }
+            if ($pairStrikes->isEmpty()) return null;
 
-            // 計算各履約價的隱含現貨價，取中位數
             $impliedPrices = $pairStrikes->map(function ($group, $strike) {
                 $callClose = (float) $group->where('option_type', 'call')->first()->close;
                 $putClose  = (float) $group->where('option_type', 'put')->first()->close;
-                // Put-Call Parity: F = K + C - P
                 return $strike + $callClose - $putClose;
             });
 
-            // 取中位數，避免離群值影響
             $sorted = $impliedPrices->sort()->values();
             $median = $sorted->count() % 2 === 0
                 ? ($sorted[$sorted->count() / 2 - 1] + $sorted[$sorted->count() / 2]) / 2
@@ -327,39 +269,35 @@ class FetchOptionDataJob implements ShouldQueue
             return round((float) $median, 2);
 
         } catch (\Exception $e) {
-            Log::warning('選擇權反推標的價格失敗', [
-                'date'  => $date,
-                'error' => $e->getMessage(),
-            ]);
+            Log::warning('選擇權反推標的價格失敗', ['date' => $date, 'error' => $e->getMessage()]);
             return null;
         }
     }
 
     // ==========================================
-    // 其他方法 (維持原邏輯)
+    // 其他方法
     // ==========================================
 
-    /**
-     * 建立 Delta Map
-     */
+    /** 建立 Delta Map */
     protected function buildDeltaMap($deltaData): array
     {
         $map = [];
-
         foreach ($deltaData as $item) {
             $optionCode = $item['ContractCode'] ?? '';
             $delta      = floatval($item['Delta'] ?? 0);
-
             if ($optionCode) {
                 $map[$optionCode] = $delta;
             }
         }
-
         return $map;
     }
 
     /**
      * 處理並儲存資料
+     *
+     * OptionDataCleanerService::transformItem 輸出的 key：
+     *   option_code, underlying, option_type, strike_price, expiry_date,
+     *   trade_date, open, high, low, close, volume, open_interest, implied_volatility
      */
     protected function processAndSaveData($cleanedData, array $deltaMap, ?float $underlyingPrice): void
     {
@@ -372,14 +310,14 @@ class FetchOptionDataJob implements ShouldQueue
                 $option = Option::firstOrCreate(
                     ['option_code' => $data['option_code']],
                     [
-                        'underlying'    => $data['underlying'],
-                        'option_type'   => $data['option_type'],
-                        'strike_price'  => $data['strike_price'],
-                        'expiry_date'   => $data['expiry_date'],
-                        'contract_size' => '50',
-                        'exercise_style'=> 'european',
-                        'is_active'     => true,
-                        'meta_data'     => [
+                        'underlying'     => $data['underlying'],
+                        'option_type'    => $data['option_type'],
+                        'strike_price'   => $data['strike_price'],
+                        'expiry_date'    => $data['expiry_date'],
+                        'contract_size'  => '50',
+                        'exercise_style' => 'european',
+                        'is_active'      => true,
+                        'meta_data'      => [
                             'underlying_name' => '臺指選擇權',
                             'expiry_month'    => $data['expiry_month'] ?? null,
                         ],
@@ -392,26 +330,25 @@ class FetchOptionDataJob implements ShouldQueue
                 $delta = $deltaMap[$data['option_code']] ?? null;
 
                 // 3. 建立或更新價格記錄
+                // ✅ key 名稱對齊 OptionDataCleanerService::transformItem 的輸出
                 OptionPrice::updateOrCreate(
                     [
                         'option_id'  => $option->id,
-                        'trade_date' => $data['date'],
+                        'trade_date' => $data['trade_date'],        // ✅ 修正：原本錯誤為 $data['date']
                     ],
                     [
-                        'open'             => $data['open_price'],
-                        'high'             => $data['high_price'],
-                        'low'              => $data['low_price'],
-                        'close'            => $data['close_price'],
-                        'volume'           => $data['volume_total'],
-                        'open_interest'    => $data['open_interest'],
-                        'bid'              => $data['best_bid'],
-                        'ask'              => $data['best_ask'],
-                        'delta'            => $delta,
-                        'moneyness'        => $data['moneyness'],
-                        'intrinsic_value'  => $data['intrinsic_value'],
-                        'time_value'       => $data['time_value'],
-                        'underlying_price' => $underlyingPrice,
-                        'meta_data'        => ['raw_data' => $data['raw_data'] ?? null],
+                        'open'               => $data['open']           ?? null,  // ✅ 修正：原本為 open_price
+                        'high'               => $data['high']           ?? null,  // ✅ 修正：原本為 high_price
+                        'low'                => $data['low']            ?? null,  // ✅ 修正：原本為 low_price
+                        'close'              => $data['close']          ?? null,  // ✅ 修正：原本為 close_price
+                        'volume'             => $data['volume']         ?? 0,     // ✅ 修正：原本為 volume_total
+                        'open_interest'      => $data['open_interest']  ?? null,
+                        'implied_volatility' => $data['implied_volatility'] ?? null,
+                        'bid'                => null,   // cleaner 未提供
+                        'ask'                => null,   // cleaner 未提供
+                        'delta'              => $delta,
+                        'underlying_price'   => $underlyingPrice,
+                        'meta_data'          => null,
                     ]
                 );
 
@@ -431,9 +368,7 @@ class FetchOptionDataJob implements ShouldQueue
         ]);
     }
 
-    /**
-     * 檢查是否為交易日
-     */
+    /** 檢查是否為交易日 */
     protected function isTradingDay(string $date): bool
     {
         $carbon = Carbon::parse($date);
