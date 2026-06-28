@@ -217,18 +217,6 @@ docker-compose down
 | POST | `/api/predictions/run` | 執行預測模型 |
 | POST | `/api/backtest/run` | 執行回測 |
 
-## 📈 開發進度
-
-- [x] Day 1-2: 環境設定與資料庫
-- [ ] Day 3-4: 資料擷取系統
-- [ ] Day 5-6: Black-Scholes 計算引擎
-- [ ] Day 7: 第一週整合測試
-- [ ] Day 8-9: 預測模型與圖表
-- [ ] Day 10-11: 策略回測系統
-- [ ] Day 12: Laravel 後台管理
-- [ ] Day 13: WebSocket 即時更新
-- [ ] Day 14: 測試與部署
-
 ## 🔒 安全性
 
 - 使用 Laravel Sanctum 進行 API 認證
